@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Бронирование подтверждено{% endblock %}
+
+{% block content %}
+<div class="confirmation-page">
+    <div class="success-icon">✓</div>
+
+    <h1>Встреча забронирована!</h1>
+
+    <div class="booking-details">
+        <h2>{{ link.title }}</h2>
+
+        <div class="detail">
+            <span class="label">Дата:</span>
+            <span class="value">{{ booking.start_time.strftime('%d.%m.%Y') }}</span>
+        </div>
+
+        <div class="detail">
+            <span class="label">Время:</span>
+            <span class="value">{{ booking.start_time.strftime('%H:%M') }} — {{ booking.end_time.strftime('%H:%M') }}</span>
+        </div>
+
+        <div class="detail">
+            <span class="label">Длительность:</span>
+            <span class="value">{{ link.duration_minutes }} минут</span>
+        </div>
+    </div>
+
+    <p class="info">
+        Событие добавлено в календарь организатора.
+    </p>
+
+    <div class="actions">
+        <a href="{{ cancel_url }}" class="cancel-link">Отменить бронирование</a>
+    </div>
+</div>
+{% endblock %}

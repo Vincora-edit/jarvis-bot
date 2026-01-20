@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Ошибка{% endblock %}
+
+{% block content %}
+<div class="error-page">
+    <div class="error-icon">!</div>
+    <h1>Ошибка</h1>
+    <p>{{ message }}</p>
+    <a href="javascript:history.back()" class="back-link">Назад</a>
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% if slots %}
+<h3>Доступное время</h3>
+<div class="slots-grid">
+    {% for slot in slots %}
+    <button
+        type="button"
+        class="slot-btn"
+        onclick="selectSlot('{{ slot.datetime.isoformat() }}')"
+    >
+        {{ slot.time }}
+    </button>
+    {% endfor %}
+</div>
+{% else %}
+<p class="no-slots">На эту дату нет свободных слотов</p>
+{% endif %}

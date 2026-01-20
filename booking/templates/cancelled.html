@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Бронирование отменено{% endblock %}
+
+{% block content %}
+<div class="cancelled-page">
+    {% if already_cancelled %}
+    <div class="info-icon">ℹ️</div>
+    <h1>Бронирование уже отменено</h1>
+    <p>Это бронирование было отменено ранее.</p>
+    {% else %}
+    <div class="success-icon cancelled">✕</div>
+    <h1>Бронирование отменено</h1>
+    <p>Встреча {{ booking.start_time.strftime('%d.%m.%Y в %H:%M') }} была отменена.</p>
+    <p class="subtext">Организатор получил уведомление об отмене.</p>
+    {% endif %}
+</div>
+{% endblock %}

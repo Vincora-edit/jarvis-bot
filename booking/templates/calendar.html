@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}{{ link.title }} — Бронирование{% endblock %}
+
+{% block content %}
+<div class="booking-page" x-data="bookingApp()">
+    <!-- Заголовок -->
+    <header class="booking-header">
+        <div class="avatar">{{ user_name[0] | upper }}</div>
+        <div class="info">
+            <h1>{{ link.title }}</h1>
+            <p class="duration">{{ link.duration_minutes }} минут</p>
+            {% if link.description %}
+            <p class="description">{{ link.description }}</p>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="booking-content">
+        <!-- Левая часть: Календарь -->
+        <div class="calendar-section">
+            <div class="calendar-header">
+                <button type="button" class="nav-btn" @click="prevMonth()" :disabled="!canGoPrev()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 18l-6-6 6-6"/>
+                    </svg>
+                </button>
+                <h2 x-text="monthYearText"></h2>
+                <button type="button" class="nav-btn" @click="nextMonth()" :disabled="!canGoNext()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 18l6-6-6-6"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="calendar-weekdays">
+                <span>Пн</span>
+                <span>Вт</span>
+                <span>Ср</span>
+                <span>Чт</span>
+                <span>Пт</span>
+                <span>Сб</span>
+                <span>Вс</span>
+            </div>
+
+            <div class="calendar-grid">
+                <template x-for="day in calendarDays" :key="day.key">
+                    <div
+                        class="calendar-day"
+                        :class="{
+                            'today': day.isToday,
+                            'selected': selectedDate && selectedDate === day.iso,
+                            'available': day.available,
+                            'disabled': !day.available && day.currentMonth,
+                            'other-month': !day.currentMonth
+                        }"
+                        @click="day.available && day.currentMonth && selectDate(day.iso)"
+                    >
+                        <span x-text="day.day"></span>
+                    </div>
+                </template>
+            </div>
+
+            <div class="timezone-info">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                </svg>
+                <span>Москва (UTC+3)</span>
+            </div>
+        </div>
+
+        <!-- Правая часть: Слоты времени -->
+        <div class="slots-section" x-show="selectedDate" x-cloak>
+            <h3 x-text="selectedDateText"></h3>
+
+            <div id="slots-container">
+                <div class="slots-loading" x-show="loadingSlots">
+                    <div class="spinner"></div>
+                    <span>Загрузка...</span>
+                </div>
+
+                <div class="slots-grid" x-show="!loadingSlots && slots.length > 0">
+                    <template x-for="slot in slots" :key="slot.time">
+                        <button
+                            type="button"
+                            class="slot-btn"
+                            :class="{ 'selected': selectedSlot === slot.datetime_iso }"
+                            @click="selectSlot(slot.datetime_iso)"
+                            x-text="slot.time"
+                        ></button>
+                    </template>
+                </div>
+
+                <p class="no-slots" x-show="!loadingSlots && slots.length === 0">
+                    Нет свободных слотов на эту дату
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Форма бронирования -->
+    <section class="form-section" x-show="selectedSlot" x-cloak>
+        <h2>Ваши данные</h2>
+        <form method="POST" action="/book/{{ link.slug }}" class="booking-form">
+            <input type="hidden" name="slot_datetime" x-model="selectedSlot">
+
+            <div class="form-group">
+                <label for="guest_name">Имя</label>
+                <input
+                    type="text"
+                    id="guest_name"
+                    name="guest_name"
+                    required
+                    minlength="2"
+                    placeholder="Как вас зовут?"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="guest_email">Email</label>
+                <input
+                    type="email"
+                    id="guest_email"
+                    name="guest_email"
+                    required
+                    placeholder="your@email.com"
+                >
+            </div>
+
+            <div class="form-group">
+                <label for="guest_notes">Тема встречи <span class="optional">(необязательно)</span></label>
+                <textarea
+                    id="guest_notes"
+                    name="guest_notes"
+                    rows="3"
+                    maxlength="500"
+                    placeholder="О чём хотите поговорить?"
+                ></textarea>
+            </div>
+
+            <button type="submit" class="submit-btn">
+                Забронировать
+            </button>
+        </form>
+    </section>
+</div>
+
+<script>
+function bookingApp() {
+    const availableDates = {{ available_dates_json | safe }};
+    const slug = '{{ link.slug }}';
+
+    return {
+        currentMonth: new Date().getMonth(),
+        currentYear: new Date().getFullYear(),
+        selectedDate: null,
+        selectedSlot: null,
+        slots: [],
+        loadingSlots: false,
+        availableDatesSet: new Set(availableDates),
+
+        get monthYearText() {
+            const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                           'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+            return `${months[this.currentMonth]} ${this.currentYear}`;
+        },
+
+        get selectedDateText() {
+            if (!this.selectedDate) return '';
+            const date = new Date(this.selectedDate);
+            const days = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+            const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+                           'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+            return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]}`;
+        },
+
+        get calendarDays() {
+            const days = [];
+            const firstDayOfMonth = new Date(this.currentYear, this.currentMonth, 1);
+            const lastDayOfMonth = new Date(this.currentYear, this.currentMonth + 1, 0);
+            const prevMonthLastDay = new Date(this.currentYear, this.currentMonth, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            // getDay() возвращает 0=Вс, 1=Пн, ..., 6=Сб
+            // Нам нужно: Пн=0, Вт=1, ..., Вс=6
+            const firstWeekday = (firstDayOfMonth.getDay() + 6) % 7;
+
+            // Даты предыдущего месяца
+            for (let i = firstWeekday - 1; i >= 0; i--) {
+                const day = prevMonthLastDay.getDate() - i;
+                days.push({
+                    day,
+                    key: `prev-${day}`,
+                    currentMonth: false,
+                    available: false,
+                    isToday: false,
+                    iso: null
+                });
+            }
+
+            // Дни текущего месяца
+            for (let day = 1; day <= lastDayOfMonth.getDate(); day++) {
+                const date = new Date(this.currentYear, this.currentMonth, day);
+                date.setHours(0, 0, 0, 0);
+                const iso = `${this.currentYear}-${String(this.currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isAvailable = this.availableDatesSet.has(iso) && date >= today;
+
+                days.push({
+                    day,
+                    key: `day-${day}`,
+                    currentMonth: true,
+                    available: isAvailable,
+                    isToday: date.getTime() === today.getTime(),
+                    iso
+                });
+            }
+
+            // Даты следующего месяца
+            let nextDay = 1;
+            while (days.length % 7 !== 0) {
+                days.push({
+                    day: nextDay,
+                    key: `next-${nextDay}`,
+                    currentMonth: false,
+                    available: false,
+                    isToday: false,
+                    iso: null
+                });
+                nextDay++;
+            }
+
+            return days;
+        },
+
+        canGoPrev() {
+            const today = new Date();
+            return this.currentYear > today.getFullYear() ||
+                   (this.currentYear === today.getFullYear() && this.currentMonth > today.getMonth());
+        },
+
+        canGoNext() {
+            const today = new Date();
+            const maxDate = new Date(today.getFullYear(), today.getMonth() + 2, 1);
+            return new Date(this.currentYear, this.currentMonth, 1) < maxDate;
+        },
+
+        prevMonth() {
+            if (this.currentMonth === 0) {
+                this.currentMonth = 11;
+                this.currentYear--;
+            } else {
+                this.currentMonth--;
+            }
+        },
+
+        nextMonth() {
+            if (this.currentMonth === 11) {
+                this.currentMonth = 0;
+                this.currentYear++;
+            } else {
+                this.currentMonth++;
+            }
+        },
+
+        async selectDate(iso) {
+            this.selectedDate = iso;
+            this.selectedSlot = null;
+            this.loadingSlots = true;
+            this.slots = [];
+
+            try {
+                const response = await fetch(`/api/slots/${slug}?date=${iso}`);
+                const data = await response.json();
+                this.slots = data.slots || [];
+            } catch (e) {
+                console.error('Error loading slots:', e);
+                this.slots = [];
+            } finally {
+                this.loadingSlots = false;
+            }
+        },
+
+        selectSlot(slotIso) {
+            this.selectedSlot = slotIso;
+            setTimeout(() => {
+                document.querySelector('.form-section')?.scrollIntoView({ behavior: 'smooth' });
+            }, 100);
+        }
+    }
+}
+</script>
+{% endblock %}
