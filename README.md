@@ -31,10 +31,12 @@
 - Фокус-чеки каждые 2 часа
 
 ### VPN-сервис (Туннель)
-- Интеграция с Marzban
-- Автоматическое создание конфигураций
+- Собственный VPN на Xray Reality (VLESS)
+- Автоматическая генерация ключей
+- Subscription URL для автообновления конфигов
 - Управление подпиской через бота
-- Тарифы и лимиты трафика
+- 7 дней бесплатного триала
+- Тарифные планы: Basic, Standard, Pro
 
 ### Система бронирования (Calendly-style)
 - Создание публичных ссылок для записи
@@ -73,7 +75,8 @@ jarvis-bot/
 │   ├── smart_habits_service.py  # Умные привычки с AI
 │   ├── memory_service.py  # Контекстная память
 │   ├── smart_reminder_service.py  # Умные напоминания
-│   ├── marzban_service.py # Интеграция с Marzban VPN
+│   ├── marzban_service.py # (Legacy) Интеграция с Marzban
+│   ├── vpn_service.py     # VPN сервис (создание ключей)
 │   ├── promo_service.py   # Промокоды
 │   ├── referral_service.py # Реферальная система
 │   ├── limits_service.py  # Лимиты и тарифы
@@ -105,6 +108,15 @@ jarvis-bot/
 │   ├── service.py         # Логика бронирования
 │   ├── schemas.py         # Pydantic схемы
 │   └── templates/         # HTML шаблоны
+│
+├── vpn/                    # VPN модуль (Xray Reality)
+│   ├── __init__.py
+│   ├── config.py          # Конфигурация серверов
+│   ├── key_generator.py   # Генератор VLESS ключей
+│   ├── subscription.py    # FastAPI subscription API
+│   ├── xray_service.py    # Управление Xray сервером
+│   └── scripts/
+│       └── install_xray.sh # Скрипт установки Xray
 │
 ├── admin-panel/            # Веб-админка
 │   └── main.py            # FastAPI админ-панель
@@ -226,10 +238,13 @@ GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GOOGLE_REDIRECT_URI=https://your-domain.com/callback
 
-# Marzban VPN
-MARZBAN_URL=https://your-marzban-server:8000
-MARZBAN_USERNAME=admin
-MARZBAN_PASSWORD=password
+# VPN (Xray Reality)
+VPN_SERVER_HOST=your-vpn-server-ip
+VPN_SERVER_SSH_PORT=22
+VPN_SERVER_SSH_USER=root
+VPN_SERVER_SSH_PASSWORD=password
+VPN_SUBSCRIPTION_SECRET=your-secret-key
+VPN_SUBSCRIPTION_DOMAIN=vpn.your-domain.com
 
 # Encryption
 ENCRYPTION_KEY=your_fernet_key
@@ -368,7 +383,8 @@ SQLite база `bot_database.db` содержит таблицы:
 | `habits` | Привычки пользователей |
 | `habit_logs` | Логи выполнения привычек |
 | `user_tokens` | Зашифрованные OAuth токены |
-| `vpn_users` | VPN подписки |
+| `subscriptions` | Подписки пользователей |
+| `tunnel_keys` | VPN ключи |
 | `promo_codes` | Промокоды |
 | `promo_code_usages` | Использование промокодов |
 | `referrals` | Рефералы |
@@ -388,7 +404,7 @@ SQLite база `bot_database.db` содержит таблицы:
 - **OpenAI GPT-4** — AI-ответы и анализ
 - **Whisper** — Распознавание речи
 - **Google Calendar API** — Интеграция с календарём
-- **Marzban** — VPN панель управления
+- **Xray Reality** — VPN протокол (VLESS)
 - **Jinja2 + HTMX** — Шаблоны фронтенда
 - **Fernet** — Шифрование токенов
 
@@ -399,7 +415,8 @@ SQLite база `bot_database.db` содержит таблицы:
 | Порт | Сервис |
 |------|--------|
 | 8080 | OAuth сервер |
-| 8081 | Booking API |
+| 8082 | Booking API |
+| 8083 | VPN Subscription API |
 | 8888 | Админ-панель |
 
 ---
