@@ -126,40 +126,45 @@ async def get_subscription(token: str, request: Request):
             key_gen = get_key_generator()
 
             for tunnel_key in keys:
-                # Если есть сохранённый subscription_url — используем его
-                if tunnel_key.subscription_url:
-                    # Если это старый Marzban URL — конвертируем
-                    if "/sub/" in tunnel_key.subscription_url:
-                        # Это subscription URL от Marzban, нужно получить данные
-                        # Пока используем как есть, позже мигрируем
-                        vless_urls.append(f"# Legacy key: {tunnel_key.device_name}")
-                    else:
-                        vless_urls.append(tunnel_key.subscription_url)
-                else:
-                    # Генерируем VLESS URL из данных ключа
-                    # Извлекаем device_id из marzban_username (формат: tg_123_d1)
-                    device_id = 1
-                    if tunnel_key.marzban_username and "_d" in tunnel_key.marzban_username:
-                        try:
-                            device_id = int(tunnel_key.marzban_username.split("_d")[-1])
-                        except ValueError:
-                            pass
+                # Проверяем тип ключа по marzban_username
+                is_new_key = (
+                    tunnel_key.marzban_username and
+                    tunnel_key.marzban_username.startswith("jarvis_")
+                )
+                is_legacy_marzban = (
+                    tunnel_key.marzban_username and
+                    tunnel_key.marzban_username.startswith("tg_user_")
+                )
 
-                    # Берём первый доступный сервер для генерации URL
-                    server = config.get_best_server()
-                    if server and server.reality_public_key:
-                        key = key_gen.create_key(
-                            user_id=user_id,
-                            device_id=device_id,
-                            server_host=server.host,
-                            server_port=server.inbound_port,
-                            public_key=server.reality_public_key,
-                            short_id=server.reality_short_id,
-                            server_name=server.reality_server_name,
-                            server_id=server.id,
-                            name=tunnel_key.device_name,
-                        )
-                        vless_urls.append(key.to_vless_url())
+                if is_legacy_marzban:
+                    # Старый ключ от Marzban - пропускаем (сервер выключен)
+                    vless_urls.append(f"# Legacy (Marzban): {tunnel_key.device_name}")
+                    continue
+
+                # Генерируем VLESS URL для новых ключей
+                # Извлекаем device_id из marzban_username (формат: jarvis_123_d11)
+                device_id = 1
+                if tunnel_key.marzban_username and "_d" in tunnel_key.marzban_username:
+                    try:
+                        device_id = int(tunnel_key.marzban_username.split("_d")[-1])
+                    except ValueError:
+                        pass
+
+                # Берём первый доступный сервер для генерации URL
+                server = config.get_best_server()
+                if server and server.reality_public_key:
+                    key = key_gen.create_key(
+                        user_id=user_id,
+                        device_id=device_id,
+                        server_host=server.host,
+                        server_port=server.inbound_port,
+                        public_key=server.reality_public_key,
+                        short_id=server.reality_short_id,
+                        server_name=server.reality_server_name,
+                        server_id=server.id,
+                        name=tunnel_key.device_name,
+                    )
+                    vless_urls.append(key.to_vless_url())
 
             # Формируем ответ (base64 encoded, один URL на строку)
             content = "\n".join(vless_urls)

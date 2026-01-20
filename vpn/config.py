@@ -68,9 +68,11 @@ class VPNServer:
     @property
     def is_available(self) -> bool:
         """Сервер доступен для новых подключений"""
+        # UNKNOWN считается доступным пока не проверен health check
         return (
-            self.status == ServerStatus.ONLINE and
-            self.current_users < self.max_users
+            self.status in (ServerStatus.ONLINE, ServerStatus.UNKNOWN) and
+            self.current_users < self.max_users and
+            bool(self.reality_public_key)  # Должен быть настроен
         )
 
     @property

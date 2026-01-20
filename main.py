@@ -17,6 +17,8 @@ PID_FILE = "/tmp/jarvis_bot.pid"
 _oauth_runner = None
 # Booking сервер
 _booking_server = None
+# VPN subscription сервер
+_vpn_server = None
 
 
 def check_already_running():
@@ -53,7 +55,22 @@ async def run_booking_server():
         booking_app,
         host="0.0.0.0",
         port=8082,
-        log_level="warning",  # Меньше логов
+        log_level="warning",
+    )
+    server = uvicorn.Server(config_uvicorn)
+    await server.serve()
+
+
+async def run_vpn_server():
+    """Запустить FastAPI сервер для VPN subscription"""
+    import uvicorn
+    from vpn.subscription import get_subscription_app
+
+    config_uvicorn = uvicorn.Config(
+        get_subscription_app(),
+        host="0.0.0.0",
+        port=8083,
+        log_level="warning",
     )
     server = uvicorn.Server(config_uvicorn)
     await server.serve()
@@ -102,12 +119,20 @@ async def on_startup():
     except Exception as e:
         logger.warning(f"⚠️ Не удалось запустить Booking сервер: {e}")
 
+    # Запускаем VPN subscription сервер
+    global _vpn_server
+    try:
+        _vpn_server = asyncio.create_task(run_vpn_server())
+        logger.info("🔐 VPN subscription сервер запущен на порту 8083")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось запустить VPN сервер: {e}")
+
     logger.info("🚀 Бот успешно запущен!")
 
 
 async def on_shutdown():
     """Действия при остановке бота"""
-    global _oauth_runner, _booking_server
+    global _oauth_runner, _booking_server, _vpn_server
 
     # Останавливаем OAuth сервер
     if _oauth_runner:
@@ -118,6 +143,11 @@ async def on_shutdown():
     if _booking_server:
         _booking_server.cancel()
         logger.info("📅 Booking сервер остановлен")
+
+    # Останавливаем VPN сервер
+    if _vpn_server:
+        _vpn_server.cancel()
+        logger.info("🔐 VPN сервер остановлен")
 
     logger.info("👋 Бот остановлен")
 
