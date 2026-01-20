@@ -113,7 +113,7 @@ class XrayManager:
         """
         Добавить пользователя в Xray на сервере.
 
-        Использует Xray gRPC API через SSH туннель или напрямую.
+        Модифицирует конфиг Xray и перезагружает сервис.
 
         Args:
             server: Сервер для добавления
@@ -124,29 +124,16 @@ class XrayManager:
             (success, error)
         """
         try:
-            # Xray API команда для добавления пользователя
-            # Формат зависит от версии Xray, используем xray api
-            cmd = f'''
-            /usr/local/bin/xray api adi \
-                --server=127.0.0.1:{server.xray_api_port} \
-                inbound \
-                --tag={server.inbound_tag} \
-                --email={email} \
-                --uuid={user_uuid} \
-                --flow={self.config.default_flow}
-            '''
-
+            # Используем скрипт xray-user для управления пользователями
+            cmd = f'/usr/local/bin/xray-user add "{user_uuid}" "{email}" "{self.config.default_flow}"'
             success, output = await self._ssh_execute(server, cmd)
 
-            if success:
-                logger.info(f"VPN: пользователь {email} добавлен на {server.id}")
+            output = output.strip()
+            if output in ("ADDED", "EXISTS"):
+                logger.info(f"VPN: пользователь {email} добавлен на {server.id} (status: {output})")
                 server.current_users += 1
                 return True, None
             else:
-                # Если пользователь уже есть — это ОК
-                if "already exists" in output.lower() or "exists" in output.lower():
-                    logger.debug(f"VPN: пользователь {email} уже существует на {server.id}")
-                    return True, None
                 logger.error(f"VPN: ошибка добавления на {server.id}: {output}")
                 return False, output
 
@@ -170,17 +157,12 @@ class XrayManager:
             (success, error)
         """
         try:
-            cmd = f'''
-            /usr/local/bin/xray api rmi \
-                --server=127.0.0.1:{server.xray_api_port} \
-                inbound \
-                --tag={server.inbound_tag} \
-                --email={email}
-            '''
-
+            # Используем скрипт xray-user для управления пользователями
+            cmd = f'/usr/local/bin/xray-user remove "{email}"'
             success, output = await self._ssh_execute(server, cmd)
 
-            if success:
+            output = output.strip()
+            if output == "REMOVED":
                 logger.info(f"VPN: пользователь {email} удалён с {server.id}")
                 server.current_users = max(0, server.current_users - 1)
                 return True, None
