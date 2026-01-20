@@ -91,7 +91,7 @@ async def cmd_tunnel(message: types.Message):
                 # Проверяем доступен ли триал
                 trial_text = ""
                 if not user.vpn_trial_used:
-                    trial_text = "\n\n🎁 *Попробуйте бесплатно 7 дней!*"
+                    trial_text = "\n\n🎁 *Попробуйте бесплатно 14 дней!*"
 
                 text = (
                     f"🔐 *Защищённый туннель*\n\n"
@@ -103,9 +103,9 @@ async def cmd_tunnel(message: types.Message):
                     f"Оформите подписку, чтобы начать:"
                 )
 
-            # Получаем max_keys из плана
-            limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-            max_keys = limits["max_keys"]
+            # Используем vpn_devices из LimitsService (учитывает триал и подписку)
+            # Если can_vpn=True, то vpn_devices содержит правильное количество устройств
+            max_keys = vpn_devices if can_vpn else 0
 
             await message.answer(
                 text,
@@ -133,24 +133,35 @@ async def callback_tunnel_menu(callback: types.CallbackQuery):
             user, _ = await memory.get_or_create_user(callback.from_user.id)
 
             tunnel_service = TunnelService(session)
+            limits_service = LimitsService(session)
+
+            # Используем LimitsService для корректной проверки (включая триал)
+            can_vpn, vpn_status, vpn_devices = await limits_service.can_use_vpn(user.id)
+
             plan = await tunnel_service.get_user_plan(user.id)
             keys_count = await tunnel_service.get_keys_count(user.id)
 
-            limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-            max_keys = limits["max_keys"]
+            max_keys = vpn_devices if can_vpn else 0
 
-            has_subscription = plan != "free"
-
-            if has_subscription:
+            if can_vpn:
                 sub = await tunnel_service.get_user_subscription(user.id)
                 expire_text = ""
-                if sub and sub.expires_at:
+
+                # Определяем отображение плана
+                if vpn_status.startswith("trial_active:"):
+                    days_left = int(vpn_status.split(":")[1])
+                    expire_text = f"\n🎁 Пробный период: {days_left} дн."
+                    plan_display = "ТРИАЛ"
+                elif sub and sub.expires_at:
                     days_left = (sub.expires_at - datetime.utcnow()).days
                     expire_text = f"\n📅 До: {sub.expires_at.strftime('%d.%m.%Y')} ({days_left} дн.)"
+                    plan_display = get_plan_name(plan).upper()
+                else:
+                    plan_display = get_plan_name(plan).upper()
 
                 text = (
                     f"🔐 *Защищённый туннель*\n\n"
-                    f"📊 Ваш план: *{plan.upper()}*\n"
+                    f"📊 Ваш план: *{plan_display}*\n"
                     f"📱 Устройств: {keys_count}/{max_keys}{expire_text}\n\n"
                     f"Выберите действие:"
                 )
@@ -164,7 +175,7 @@ async def callback_tunnel_menu(callback: types.CallbackQuery):
             await callback.message.edit_text(
                 text,
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=tunnel_menu_keyboard(has_subscription, keys_count, max_keys)
+                reply_markup=tunnel_menu_keyboard(can_vpn, keys_count, max_keys)
             )
     except Exception as e:
         logger.error(f"Error in callback_tunnel_menu: {e}")
@@ -242,8 +253,67 @@ async def callback_add_device(callback: types.CallbackQuery):
             user, _ = await memory.get_or_create_user(callback.from_user.id)
 
             tunnel_service = TunnelService(session)
+            limits_service = LimitsService(session)
 
-            # Проверяем можно ли создать ключ
+            # Сначала проверяем через LimitsService (учитывает триал)
+            can_vpn, vpn_status, vpn_devices = await limits_service.can_use_vpn(user.id)
+
+            # Если пользователь может активировать триал — делаем это автоматически
+            if vpn_status == "trial":
+                # Активируем триал
+                success, message = await limits_service.activate_vpn_trial(user.id)
+                if not success:
+                    await callback.message.edit_text(
+                        f"❌ {message}",
+                        reply_markup=back_to_menu_keyboard()
+                    )
+                    await callback.answer()
+                    return
+
+                # Обновляем user из БД чтобы получить vpn_trial_expires
+                await session.refresh(user)
+
+                # Создаём подписку для триала
+                trial_sub = Subscription(
+                    user_id=user.id,
+                    plan="free_trial",
+                    status="active",
+                    expires_at=user.vpn_trial_expires
+                )
+                session.add(trial_sub)
+                await session.commit()
+
+                # Создаём ключ
+                sub_url, error = await tunnel_service.create_key(
+                    user_id=user.id,
+                    telegram_id=callback.from_user.id,
+                    full_name=callback.from_user.full_name or "User",
+                    device_name="Устройство"
+                )
+
+                if sub_url:
+                    text = (
+                        f"🎉 *Пробный период активирован!*\n\n"
+                        f"У вас есть *14 дней* бесплатного VPN.\n\n"
+                        f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
+                        f"`{sub_url}`\n\n"
+                        f"_Нажми на ссылку, чтобы скопировать._"
+                    )
+                    await callback.message.edit_text(
+                        text,
+                        parse_mode=ParseMode.MARKDOWN,
+                        reply_markup=back_to_menu_keyboard()
+                    )
+                else:
+                    await callback.message.edit_text(
+                        f"⚠️ Триал активирован, но не удалось создать ключ: {error}\n\n"
+                        f"Попробуйте снова нажать «➕ Добавить устройство».",
+                        reply_markup=back_to_menu_keyboard()
+                    )
+                await callback.answer()
+                return
+
+            # Для пользователей с подпиской — обычная проверка
             can_create, error, max_keys = await tunnel_service.can_create_key(user.id)
             if not can_create:
                 await callback.message.edit_text(
@@ -326,7 +396,7 @@ async def callback_stats(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "tunnel:trial")
 async def callback_trial(callback: types.CallbackQuery):
-    """Активировать VPN триал на 7 дней"""
+    """Активировать VPN триал на 14 дней"""
     try:
         async with async_session() as session:
             memory = MemoryService(session)
@@ -371,7 +441,7 @@ async def callback_trial(callback: types.CallbackQuery):
             if sub_url:
                 text = (
                     f"🎉 *Пробный период активирован!*\n\n"
-                    f"У вас есть *7 дней* бесплатного VPN.\n\n"
+                    f"У вас есть *14 дней* бесплатного VPN.\n\n"
                     f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
                     f"`{sub_url}`\n\n"
                     f"_Нажми на ссылку, чтобы скопировать._"
@@ -697,6 +767,9 @@ async def process_promo_code(message: types.Message, state: FSMContext):
             # Увеличиваем счётчик использований
             promo.current_uses += 1
 
+            # ВАЖНО: Обновляем план в user для корректной работы LimitsService
+            user.subscription_plan = promo.plan
+
             await session.commit()
 
             # Сразу создаём VPN ключ для пользователя
@@ -708,14 +781,17 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                 parse_mode=ParseMode.MARKDOWN
             )
 
-            # Создаём ключ в Marzban
-            tunnel_service = TunnelService(session)
-            sub_url, error = await tunnel_service.create_key(
-                user_id=user.id,
-                telegram_id=message.from_user.id,
-                full_name=message.from_user.full_name or "User",
-                device_name="Device"
-            )
+            # Создаём ключ в Marzban (используем новую сессию чтобы гарантированно видеть подписку)
+            async with async_session() as new_session:
+                tunnel_service = TunnelService(new_session)
+                sub_url, error = await tunnel_service.create_key(
+                    user_id=user.id,
+                    telegram_id=message.from_user.id,
+                    full_name=message.from_user.full_name or "User",
+                    device_name="Device"
+                )
+
+            logger.info(f"Promo key creation result for user {user.id}: sub_url={bool(sub_url)}, error={error}")
 
             if sub_url:
                 await message.answer(
@@ -728,9 +804,10 @@ async def process_promo_code(message: types.Message, state: FSMContext):
                     reply_markup=back_to_menu_keyboard()
                 )
             else:
+                logger.error(f"Failed to create key after promo for user {user.id}: {error}")
                 await message.answer(
-                    f"⚠️ Промокод активирован, но не удалось создать ключ: {error}\n\n"
-                    f"Перейдите в меню туннеля и нажмите «Получить ключ».",
+                    f"⚠️ Промокод активирован, но не удалось создать ключ.\n\n"
+                    f"Перейдите в меню туннеля и нажмите «➕ Добавить устройство».",
                     reply_markup=back_to_menu_keyboard()
                 )
 
