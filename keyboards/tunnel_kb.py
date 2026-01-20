@@ -99,7 +99,7 @@ def plan_periods_keyboard(plan: str) -> InlineKeyboardMarkup:
 
 
 def devices_keyboard(keys: list, can_add: bool = False) -> InlineKeyboardMarkup:
-    """Список устройств с возможностью удаления и просмотра ключа"""
+    """Список устройств с возможностью удаления, переименования и просмотра ключа"""
     buttons = []
 
     for key in keys:
@@ -107,6 +107,10 @@ def devices_keyboard(keys: list, can_add: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(
                 text=f"📱 {key.device_name}",
                 callback_data=f"tunnel:show_key:{key.id}"
+            ),
+            InlineKeyboardButton(
+                text="✏️",
+                callback_data=f"tunnel:rename:{key.id}"
             ),
             InlineKeyboardButton(
                 text="❌",

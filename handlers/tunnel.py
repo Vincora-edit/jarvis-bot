@@ -13,7 +13,7 @@ from sqlalchemy import select
 from database import async_session
 from database.models import Subscription, PromoCode, PromoCodeUsage, User, TunnelKey
 from services.memory_service import MemoryService
-from services.marzban_service import TunnelService, VPN_PLAN_LIMITS
+from services.vpn_service import TunnelService, VPN_PLAN_LIMITS
 from services.limits_service import LimitsService
 from services.plans import get_plan_name
 
@@ -39,6 +39,16 @@ router = Router()
 # === FSM для промокода ===
 class PromoStates(StatesGroup):
     waiting_for_code = State()
+
+
+# === FSM для переименования устройства ===
+class RenameStates(StatesGroup):
+    waiting_for_name = State()
+
+
+# === FSM для создания устройства ===
+class AddDeviceStates(StatesGroup):
+    waiting_for_name = State()
 
 
 # === КОМАНДА /tunnel ===
@@ -91,7 +101,7 @@ async def cmd_tunnel(message: types.Message):
                 # Проверяем доступен ли триал
                 trial_text = ""
                 if not user.vpn_trial_used:
-                    trial_text = "\n\n🎁 *Попробуйте бесплатно 14 дней!*"
+                    trial_text = "\n\n🎁 *Попробуйте бесплатно 7 дней!*"
 
                 text = (
                     f"🔐 *Защищённый туннель*\n\n"
@@ -243,11 +253,9 @@ async def callback_get_key(callback: types.CallbackQuery):
 # === CALLBACK: ДОБАВИТЬ УСТРОЙСТВО ===
 
 @router.callback_query(F.data == "tunnel:add_device")
-async def callback_add_device(callback: types.CallbackQuery):
-    """Добавить новое устройство (создать новый ключ)"""
+async def callback_add_device(callback: types.CallbackQuery, state: FSMContext):
+    """Спросить название устройства перед созданием ключа"""
     try:
-        await callback.message.edit_text("⏳ Создаю ключ для нового устройства...")
-
         async with async_session() as session:
             memory = MemoryService(session)
             user, _ = await memory.get_or_create_user(callback.from_user.id)
@@ -255,22 +263,84 @@ async def callback_add_device(callback: types.CallbackQuery):
             tunnel_service = TunnelService(session)
             limits_service = LimitsService(session)
 
-            # Сначала проверяем через LimitsService (учитывает триал)
+            # Проверяем может ли пользователь создать ключ
             can_vpn, vpn_status, vpn_devices = await limits_service.can_use_vpn(user.id)
 
-            # Если пользователь может активировать триал — делаем это автоматически
-            if vpn_status == "trial":
-                # Активируем триал
-                success, message = await limits_service.activate_vpn_trial(user.id)
-                if not success:
+            # Если нет подписки и нет триала — показываем ошибку
+            if not can_vpn and vpn_status != "trial":
+                await callback.message.edit_text(
+                    "❌ У вас нет активной подписки VPN.\n\n"
+                    "Оформите подписку или активируйте пробный период.",
+                    reply_markup=back_to_menu_keyboard()
+                )
+                await callback.answer()
+                return
+
+            # Для пользователей с подпиской — проверяем лимит
+            if vpn_status != "trial":
+                can_create, error, max_keys = await tunnel_service.can_create_key(user.id)
+                if not can_create:
                     await callback.message.edit_text(
-                        f"❌ {message}",
+                        f"❌ {error}",
                         reply_markup=back_to_menu_keyboard()
                     )
                     await callback.answer()
                     return
 
-                # Обновляем user из БД чтобы получить vpn_trial_expires
+            # Сохраняем в state, что это триал (если да)
+            await state.update_data(is_trial_activation=(vpn_status == "trial"))
+            await state.set_state(AddDeviceStates.waiting_for_name)
+
+            await callback.message.edit_text(
+                "📱 *Новое устройство*\n\n"
+                "Введите название для устройства:\n"
+                "_Например: iPhone, MacBook, Рабочий ПК_",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_to_menu_keyboard()
+            )
+    except Exception as e:
+        logger.error(f"Error in callback_add_device: {e}")
+        await callback.message.edit_text(
+            "❌ Произошла ошибка. Попробуйте позже.",
+            reply_markup=back_to_menu_keyboard()
+        )
+    await callback.answer()
+
+
+@router.message(AddDeviceStates.waiting_for_name)
+async def process_add_device_name(message: types.Message, state: FSMContext):
+    """Создать ключ с указанным названием устройства"""
+    try:
+        device_name = message.text.strip()[:50]  # Ограничение 50 символов
+
+        if not device_name:
+            await message.answer("❌ Название не может быть пустым. Попробуйте ещё раз.")
+            return
+
+        data = await state.get_data()
+        is_trial = data.get("is_trial_activation", False)
+
+        await message.answer("⏳ Создаю ключ...")
+
+        async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(message.from_user.id)
+
+            tunnel_service = TunnelService(session)
+            limits_service = LimitsService(session)
+
+            # Если это активация триала
+            if is_trial:
+                success, trial_message = await limits_service.activate_vpn_trial(user.id)
+                if not success:
+                    await message.answer(
+                        f"❌ {trial_message}",
+                        reply_markup=back_to_menu_keyboard()
+                    )
+                    await state.clear()
+                    return
+
+                # Обновляем user из БД
                 await session.refresh(user)
 
                 # Создаём подписку для триала
@@ -283,79 +353,51 @@ async def callback_add_device(callback: types.CallbackQuery):
                 session.add(trial_sub)
                 await session.commit()
 
-                # Создаём ключ
-                sub_url, error = await tunnel_service.create_key(
-                    user_id=user.id,
-                    telegram_id=callback.from_user.id,
-                    full_name=callback.from_user.full_name or "User",
-                    device_name="Устройство"
-                )
+            # Создаём ключ
+            sub_url, error = await tunnel_service.create_key(
+                user_id=user.id,
+                telegram_id=message.from_user.id,
+                full_name=message.from_user.full_name or "User",
+                device_name=device_name
+            )
 
-                if sub_url:
+            if sub_url:
+                if is_trial:
                     text = (
                         f"🎉 *Пробный период активирован!*\n\n"
-                        f"У вас есть *14 дней* бесплатного VPN.\n\n"
+                        f"У вас есть *7 дней* бесплатного VPN.\n"
+                        f"Устройство: *{device_name}*\n\n"
                         f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
                         f"`{sub_url}`\n\n"
                         f"_Нажми на ссылку, чтобы скопировать._"
                     )
-                    await callback.message.edit_text(
-                        text,
-                        parse_mode=ParseMode.MARKDOWN,
-                        reply_markup=back_to_menu_keyboard()
-                    )
                 else:
-                    await callback.message.edit_text(
-                        f"⚠️ Триал активирован, но не удалось создать ключ: {error}\n\n"
-                        f"Попробуйте снова нажать «➕ Добавить устройство».",
-                        reply_markup=back_to_menu_keyboard()
+                    text = (
+                        f"🔑 *Ключ создан!*\n\n"
+                        f"Устройство: *{device_name}*\n\n"
+                        f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
+                        f"`{sub_url}`\n\n"
+                        f"_Нажми на ссылку, чтобы скопировать._"
                     )
-                await callback.answer()
-                return
-
-            # Для пользователей с подпиской — обычная проверка
-            can_create, error, max_keys = await tunnel_service.can_create_key(user.id)
-            if not can_create:
-                await callback.message.edit_text(
-                    f"❌ {error}",
-                    reply_markup=back_to_menu_keyboard()
-                )
-                await callback.answer()
-                return
-
-            # Создаём новый ключ
-            sub_url, error = await tunnel_service.create_key(
-                user_id=user.id,
-                telegram_id=callback.from_user.id,
-                full_name=callback.from_user.full_name or "User",
-                device_name="Устройство"
-            )
-
-            if sub_url:
-                keys_count = await tunnel_service.get_keys_count(user.id)
-                text = (
-                    f"🔑 *Ключ для устройства #{keys_count} создан!*\n\n"
-                    f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
-                    f"`{sub_url}`\n\n"
-                    f"_Нажми на ссылку, чтобы скопировать._"
-                )
-                await callback.message.edit_text(
+                await message.answer(
                     text,
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=back_to_menu_keyboard()
                 )
             else:
-                await callback.message.edit_text(
-                    f"❌ Ошибка: {error}\n\nПопробуйте позже или обратитесь в поддержку.",
+                await message.answer(
+                    f"❌ Ошибка: {error}\n\nПопробуйте позже.",
                     reply_markup=back_to_menu_keyboard()
                 )
+
+        await state.clear()
     except Exception as e:
-        logger.error(f"Error in callback_add_device: {e}")
-        await callback.message.edit_text(
+        logger.error(f"Error in process_add_device_name: {e}")
+        await message.answer(
             "❌ Произошла ошибка при создании ключа. Попробуйте позже.",
             reply_markup=back_to_menu_keyboard()
         )
-    await callback.answer()
+        await state.clear()
 
 
 # === CALLBACK: СТАТИСТИКА ===
@@ -396,7 +438,7 @@ async def callback_stats(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "tunnel:trial")
 async def callback_trial(callback: types.CallbackQuery):
-    """Активировать VPN триал на 14 дней"""
+    """Активировать VPN триал на 7 дней"""
     try:
         async with async_session() as session:
             memory = MemoryService(session)
@@ -441,7 +483,7 @@ async def callback_trial(callback: types.CallbackQuery):
             if sub_url:
                 text = (
                     f"🎉 *Пробный период активирован!*\n\n"
-                    f"У вас есть *14 дней* бесплатного VPN.\n\n"
+                    f"У вас есть *7 дней* бесплатного VPN.\n\n"
                     f"Скопируй ссылку ниже и вставь в приложение Happ:\n\n"
                     f"`{sub_url}`\n\n"
                     f"_Нажми на ссылку, чтобы скопировать._"
@@ -586,6 +628,92 @@ async def callback_revoke_confirm(callback: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in callback_revoke_confirm: {e}")
         await callback.answer()
+
+
+# === CALLBACK: ПЕРЕИМЕНОВАНИЕ УСТРОЙСТВА ===
+
+@router.callback_query(F.data.startswith("tunnel:rename:"))
+async def callback_rename(callback: types.CallbackQuery, state: FSMContext):
+    """Запрос нового названия устройства"""
+    try:
+        key_id = int(callback.data.split(":")[2])
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(TunnelKey).where(TunnelKey.id == key_id)
+            )
+            key = result.scalar_one_or_none()
+
+            if not key:
+                await callback.answer("Устройство не найдено", show_alert=True)
+                return
+
+            await state.update_data(rename_key_id=key_id)
+            await state.set_state(RenameStates.waiting_for_name)
+
+            await callback.message.edit_text(
+                f"✏️ *Переименование устройства*\n\n"
+                f"Текущее название: *{key.device_name}*\n\n"
+                f"Введите новое название:",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_to_menu_keyboard()
+            )
+    except Exception as e:
+        logger.error(f"Error in callback_rename: {e}")
+    await callback.answer()
+
+
+@router.message(RenameStates.waiting_for_name)
+async def process_rename(message: types.Message, state: FSMContext):
+    """Обработка нового названия устройства"""
+    try:
+        data = await state.get_data()
+        key_id = data.get("rename_key_id")
+
+        if not key_id:
+            await message.answer("❌ Ошибка. Попробуйте ещё раз.")
+            await state.clear()
+            return
+
+        new_name = message.text.strip()[:50]  # Ограничение 50 символов
+
+        if not new_name:
+            await message.answer("❌ Название не может быть пустым. Попробуйте ещё раз.")
+            return
+
+        async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(message.from_user.id)
+
+            # Проверяем что ключ принадлежит пользователю
+            result = await session.execute(
+                select(TunnelKey).where(
+                    TunnelKey.id == key_id,
+                    TunnelKey.user_id == user.id
+                )
+            )
+            key = result.scalar_one_or_none()
+
+            if not key:
+                await message.answer("❌ Устройство не найдено.")
+                await state.clear()
+                return
+
+            # Обновляем название
+            key.device_name = new_name
+            await session.commit()
+
+            await message.answer(
+                f"✅ Устройство переименовано в *{new_name}*",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=back_to_menu_keyboard()
+            )
+
+        await state.clear()
+    except Exception as e:
+        logger.error(f"Error in process_rename: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+        await state.clear()
 
 
 # === CALLBACK: ТАРИФЫ ===
