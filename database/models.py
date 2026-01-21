@@ -67,7 +67,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     title: Mapped[str] = mapped_column(String(500))
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -88,7 +88,7 @@ class DiaryEntry(Base):
     __tablename__ = "diary_entries"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     content: Mapped[str] = mapped_column(Text)
     tags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # ["work", "family", etc]
@@ -104,7 +104,7 @@ class Habit(Base):
     __tablename__ = "habits"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     name: Mapped[str] = mapped_column(String(100))  # "Спорт", "Вода", "Медитация"
     emoji: Mapped[str] = mapped_column(String(10), default="✅")
@@ -134,8 +134,8 @@ class HabitLog(Base):
     __tablename__ = "habit_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    habit_id: Mapped[int] = mapped_column(ForeignKey("habits.id"))
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    habit_id: Mapped[int] = mapped_column(ForeignKey("habits.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     value: Mapped[int] = mapped_column(Integer, default=1)  # 1 = выполнено, или кол-во (стаканов воды)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -166,7 +166,7 @@ class MemoryContext(Base):
     __tablename__ = "memory_contexts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     key: Mapped[str] = mapped_column(String(100))  # goals/preferences/insights/facts
     value: Mapped[dict] = mapped_column(JSON)  # {"content": "...", "importance": 5}
@@ -182,7 +182,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     role: Mapped[str] = mapped_column(String(20))  # user/assistant
     content: Mapped[str] = mapped_column(Text)

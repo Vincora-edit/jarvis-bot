@@ -635,8 +635,15 @@ async def callback_show_key(callback: types.CallbackQuery):
         key_id = int(callback.data.split(":")[2])
 
         async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(callback.from_user.id)
+
+            # SECURITY: Проверяем что ключ принадлежит пользователю
             result = await session.execute(
-                select(TunnelKey).where(TunnelKey.id == key_id)
+                select(TunnelKey).where(
+                    TunnelKey.id == key_id,
+                    TunnelKey.user_id == user.id
+                )
             )
             key = result.scalar_one_or_none()
 
@@ -721,8 +728,15 @@ async def callback_rename(callback: types.CallbackQuery, state: FSMContext):
         key_id = int(callback.data.split(":")[2])
 
         async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(callback.from_user.id)
+
+            # SECURITY: Проверяем что ключ принадлежит пользователю
             result = await session.execute(
-                select(TunnelKey).where(TunnelKey.id == key_id)
+                select(TunnelKey).where(
+                    TunnelKey.id == key_id,
+                    TunnelKey.user_id == user.id
+                )
             )
             key = result.scalar_one_or_none()
 

@@ -34,7 +34,9 @@ if not ADMIN_SESSION_SECRET:
     print("WARNING: ADMIN_SESSION_SECRET not set in .env, using random value")
 
 if not ADMIN_PASSWORD:
-    print("WARNING: ADMIN_PASSWORD not set in .env!")
+    print("CRITICAL: ADMIN_PASSWORD not set in .env!")
+    print("Set ADMIN_PASSWORD environment variable before starting admin panel")
+    raise SystemExit(1)
 
 app = FastAPI(title="Jarvis Admin Panel")
 app.add_middleware(
@@ -97,9 +99,8 @@ async def login(request: Request, password: str = Form(...)):
 
     _record_login_attempt(client_ip)
 
-    # DEBUG: Логируем попытку входа
-    print(f"LOGIN ATTEMPT: ip={client_ip}, password_len={len(password)}, stored_len={len(ADMIN_PASSWORD) if ADMIN_PASSWORD else 0}")
-    print(f"DEBUG: password={repr(password)}, stored={repr(ADMIN_PASSWORD)}")
+    # Логируем попытку входа (без пароля!)
+    print(f"LOGIN ATTEMPT: ip={client_ip}")
 
     # SECURITY: Сравнение через hmac для защиты от timing attack
     import hmac
