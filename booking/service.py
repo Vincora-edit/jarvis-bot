@@ -21,9 +21,14 @@ logger = logging.getLogger(__name__)
 class BookingService:
     """Сервис для работы с бронированиями"""
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, user_timezone: str = None):
         self.session = session
-        self.timezone = pytz.timezone("Europe/Moscow")
+        # Используем timezone пользователя или дефолтный
+        tz_name = user_timezone or "Europe/Moscow"
+        try:
+            self.timezone = pytz.timezone(tz_name)
+        except pytz.UnknownTimeZoneError:
+            self.timezone = pytz.timezone("Europe/Moscow")
 
     @staticmethod
     def generate_slug(length: int = 8) -> str:
@@ -246,7 +251,10 @@ class BookingService:
 
         # Получаем события из Google Calendar
         try:
-            calendar = CalendarService(user_credentials=user.google_credentials)
+            calendar = CalendarService(
+                user_credentials=user.google_credentials,
+                user_timezone=user.timezone
+            )
             free_slots = calendar.find_free_slots(
                 date_str=target_date.strftime("%Y-%m-%d"),
                 min_duration_minutes=booking_link.duration_minutes,
@@ -345,7 +353,10 @@ class BookingService:
         # Создаём событие в Google Calendar
         google_event_id = None
         try:
-            calendar = CalendarService(user_credentials=user.google_credentials)
+            calendar = CalendarService(
+                user_credentials=user.google_credentials,
+                user_timezone=user.timezone
+            )
             event = calendar.create_event(
                 title=f"{booking_link.title} — {guest_name}",
                 start_datetime=start_time,
@@ -400,7 +411,10 @@ class BookingService:
         if booking.google_event_id:
             try:
                 user = booking.booking_link.user
-                calendar = CalendarService(user_credentials=user.google_credentials)
+                calendar = CalendarService(
+                    user_credentials=user.google_credentials,
+                    user_timezone=user.timezone
+                )
                 calendar.delete_event(booking.google_event_id)
                 logger.info(f"Удалено событие из календаря: {booking.google_event_id}")
             except Exception as e:

@@ -42,6 +42,7 @@ from database import init_db, async_session
 from scheduler import setup_scheduler
 from handlers import user
 from handlers import tunnel
+from services.admin_notify_service import init_admin_notify
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,10 @@ async def on_startup():
 
     # Инициализируем базу данных
     await init_db()
+
+    # Инициализируем сервис уведомлений админа
+    init_admin_notify(bot)
+    logger.info("📢 Сервис уведомлений админа инициализирован")
 
     # Запускаем планировщик
     setup_scheduler(bot, async_session)

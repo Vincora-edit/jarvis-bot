@@ -73,10 +73,11 @@ class CalendarService:
         "галера": "⛵", "галере": "⛵",
     }
 
-    def __init__(self, user_credentials: dict = None):
+    def __init__(self, user_credentials: dict = None, user_timezone: str = None):
         """
         Инициализация сервиса.
         user_credentials — токены пользователя из БД (если подключен свой календарь)
+        user_timezone — часовой пояс пользователя (например "Europe/Moscow", "America/New_York")
         """
         if user_credentials:
             # Используем токены пользователя
@@ -91,7 +92,13 @@ class CalendarService:
             # Используем общий service account
             self.service = get_calendar_service()
 
-        self.timezone = pytz.timezone(config.TIMEZONE)
+        # Используем timezone пользователя или дефолтный из конфига
+        tz_name = user_timezone or config.TIMEZONE
+        try:
+            self.timezone = pytz.timezone(tz_name)
+        except pytz.UnknownTimeZoneError:
+            self.timezone = pytz.timezone(config.TIMEZONE)
+        self.timezone_name = self.timezone.zone  # Сохраняем имя для Google Calendar API
         self._calendars_cache = None  # Кэш списка календарей
 
     def get_all_calendars(self) -> list[dict]:
@@ -169,11 +176,11 @@ class CalendarService:
             "description": description,
             "start": {
                 "dateTime": start_datetime.isoformat(),
-                "timeZone": config.TIMEZONE,
+                "timeZone": self.timezone_name,
             },
             "end": {
                 "dateTime": end_datetime.isoformat(),
-                "timeZone": config.TIMEZONE,
+                "timeZone": self.timezone_name,
             },
             "reminders": {
                 "useDefault": False,

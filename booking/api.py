@@ -35,8 +35,14 @@ templates = Jinja2Templates(directory="booking/templates")
 # Статика
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Таймзона
-tz = pytz.timezone(config.TIMEZONE)
+
+def get_user_tz(user) -> pytz.BaseTzInfo:
+    """Получить timezone пользователя"""
+    tz_name = user.timezone if user and user.timezone else config.TIMEZONE
+    try:
+        return pytz.timezone(tz_name)
+    except pytz.UnknownTimeZoneError:
+        return pytz.timezone(config.TIMEZONE)
 
 
 # === ПУБЛИЧНЫЕ СТРАНИЦЫ ===
@@ -164,9 +170,10 @@ async def create_booking(
 
         try:
             start_time = datetime.fromisoformat(slot_datetime)
-            # Убеждаемся что время в нужной таймзоне
+            # Убеждаемся что время в нужной таймзоне владельца ссылки
+            user_tz = get_user_tz(link.user)
             if start_time.tzinfo is None:
-                start_time = tz.localize(start_time)
+                start_time = user_tz.localize(start_time)
         except ValueError:
             errors.append("Неверный формат времени")
             start_time = None
@@ -297,11 +304,13 @@ async def notify_booking_owner(telegram_id: int, booking, link):
     try:
         from create_bot import bot
 
+        # Используем timezone владельца ссылки
+        user_tz = get_user_tz(link.user)
         start_local = booking.start_time
         if start_local.tzinfo is None:
-            start_local = tz.localize(start_local)
+            start_local = user_tz.localize(start_local)
         else:
-            start_local = start_local.astimezone(tz)
+            start_local = start_local.astimezone(user_tz)
 
         # Экранируем пользовательский ввод
         guest_name = _escape_md(booking.guest_name)
@@ -331,11 +340,13 @@ async def notify_booking_cancelled(telegram_id: int, booking):
     try:
         from create_bot import bot
 
+        # Используем timezone владельца ссылки
+        user_tz = get_user_tz(booking.booking_link.user)
         start_local = booking.start_time
         if start_local.tzinfo is None:
-            start_local = tz.localize(start_local)
+            start_local = user_tz.localize(start_local)
         else:
-            start_local = start_local.astimezone(tz)
+            start_local = start_local.astimezone(user_tz)
 
         guest_name = _escape_md(booking.guest_name)
 

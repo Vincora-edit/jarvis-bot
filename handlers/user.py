@@ -40,14 +40,17 @@ def get_calendar_service():
 
 
 async def get_user_calendar_service(telegram_id: int) -> CalendarService | None:
-    """Получить сервис календаря для пользователя (с его OAuth токенами если есть).
+    """Получить сервис календаря для пользователя (с его OAuth токенами и timezone).
     Возвращает None если у пользователя нет подключённого календаря."""
     async with async_session() as session:
         memory = MemoryService(session)
         user, _ = await memory.get_or_create_user(telegram_id)
 
         if user.calendar_connected and user.google_credentials:
-            return CalendarService(user_credentials=user.google_credentials)
+            return CalendarService(
+                user_credentials=user.google_credentials,
+                user_timezone=user.timezone
+            )
         else:
             # НЕ возвращаем общий календарь - это приватность!
             return None
@@ -134,6 +137,18 @@ async def command_start(message: types.Message):
             # Не показываем ошибку, просто логируем
             if success:
                 print(f"Referral registered: user {user.id} from code {referral_code}")
+
+        # Уведомление админа о новом пользователе
+        if is_new:
+            from services.admin_notify_service import get_admin_notify
+            admin_notify = get_admin_notify()
+            if admin_notify:
+                await admin_notify.notify_new_user(
+                    telegram_id=message.from_user.id,
+                    username=message.from_user.username,
+                    first_name=message.from_user.first_name,
+                    referral_code=referral_code
+                )
 
     name = message.from_user.first_name or ""
     greeting = f"Привет{', ' + name if name else ''}!" if name else "Привет!"
@@ -298,6 +313,7 @@ HELP_TEXT = """
 +14 дней подписки за каждого оплатившего друга.
 
 • /ref — твоя реферальная ссылка и статистика
+• /tarif — посмотреть тарифы
 """
 
 
@@ -305,6 +321,68 @@ HELP_TEXT = """
 async def command_help(message: types.Message):
     """Справка"""
     await message.answer(HELP_TEXT.strip(), parse_mode="Markdown")
+
+
+@router.message(Command("tarif"))
+async def command_tarif(message: types.Message):
+    """Показать тарифы"""
+    from services.plans import PLANS, PLAN_PRICES, PLAN_NAMES
+
+    text = """💎 **Тарифные планы Джарвиса**
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🆓 **Бесплатный**
+• Привычки: до 3
+• Напоминаний в день: 3
+• AI запросов в день: 5
+• VPN: триал 7 дней
+• Букинг: нет
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+⭐ **Базовый** — 199₽/мес
+• Привычки: до 5
+• Напоминаний в день: 10
+• AI запросов в день: 50
+• VPN: 1 устройство
+• Букинг: 1 ссылка
+• Аналитика: базовая
+
+📦 499₽ за 3 мес _(скидка 17%)_
+📦 1699₽ за год _(скидка 29%)_
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+⚡ **Стандарт** — 399₽/мес
+• Привычки: до 10
+• Напоминаний в день: 20
+• AI запросов в день: 100
+• VPN: 3 устройства
+• Букинг: 5 ссылок
+• Аналитика + недельные отчёты
+
+📦 999₽ за 3 мес _(скидка 17%)_
+📦 3399₽ за год _(скидка 29%)_
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 **Про** — 599₽/мес
+• Привычки: безлимит
+• Напоминания: безлимит
+• AI запросы: безлимит
+• VPN: 5 устройств
+• Букинг: безлимит
+• Полная аналитика + AI-инсайты
+
+📦 1499₽ за 3 мес _(скидка 17%)_
+📦 4999₽ за год _(скидка 31%)_
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+💡 Для подключения используй /tunnel → Тарифы
+"""
+    await message.answer(text, parse_mode="Markdown")
 
 
 @router.message(Command("ref"))

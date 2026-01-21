@@ -995,6 +995,19 @@ async def process_promo_code(message: types.Message, state: FSMContext):
 
             await session.commit()
 
+            # Уведомляем админа об использовании промокода
+            from services.admin_notify_service import get_admin_notify
+            admin_notify = get_admin_notify()
+            if admin_notify:
+                await admin_notify.notify_promo_used(
+                    telegram_id=message.from_user.id,
+                    username=message.from_user.username,
+                    promo_code=promo.code,
+                    promo_type=promo.promo_type,
+                    plan=promo.plan,
+                    days=promo.days
+                )
+
             # Сразу создаём VPN ключ для пользователя
             await message.answer(
                 f"✅ *Промокод активирован!*\n\n"

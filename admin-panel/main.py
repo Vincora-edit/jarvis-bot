@@ -257,7 +257,6 @@ def render_referrals_page(data: dict) -> str:
             <h1>👥 Рефералы</h1>
             <nav>
                 <a href="/">Dashboard</a>
-                <a href="/vpn">VPN ключи</a>
                 <a href="/promo">Промокоды</a>
                 <a href="/referrals" class="active">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -459,6 +458,72 @@ async def reset_promo_usage(request: Request, usage_id: int):
     return RedirectResponse(url="/promo", status_code=302)
 
 
+@app.get("/promo/reset/{user_id}")
+async def reset_promo_by_user(request: Request, user_id: int):
+    """Сбросить промокод для пользователя по user_id"""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+        # Получаем последнее использование промокода для этого пользователя
+        cursor = await db.execute(
+            "SELECT id, promo_code_id, subscription_id FROM promo_code_usages WHERE user_id = ? ORDER BY used_at DESC LIMIT 1",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+
+        if row:
+            usage_id, promo_code_id, subscription_id = row
+
+            # Удаляем использование
+            await db.execute("DELETE FROM promo_code_usages WHERE id = ?", (usage_id,))
+
+            # Уменьшаем счётчик использований
+            await db.execute(
+                "UPDATE promo_codes SET current_uses = MAX(0, current_uses - 1) WHERE id = ?",
+                (promo_code_id,)
+            )
+
+            # Удаляем подписку если была создана
+            if subscription_id:
+                await db.execute("DELETE FROM subscriptions WHERE id = ?", (subscription_id,))
+
+            # Удаляем VPN ключи пользователя
+            await db.execute("DELETE FROM tunnel_keys WHERE user_id = ?", (user_id,))
+
+            await db.commit()
+
+    return RedirectResponse(url="/", status_code=302)
+
+
+@app.get("/user/delete/{user_id}")
+async def delete_user(request: Request, user_id: int):
+    """Полностью удалить пользователя из БД"""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+        # Удаляем все связанные данные
+        await db.execute("DELETE FROM tunnel_keys WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM subscriptions WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM promo_code_usages WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM tasks WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM diary_entries WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM habits WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM reminders WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM memory_contexts WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM api_usage_logs WHERE user_id = ?", (user_id,))
+        await db.execute("DELETE FROM booking_links WHERE user_id = ?", (user_id,))
+        # Удаляем самого пользователя
+        await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        await db.commit()
+
+    return RedirectResponse(url="/", status_code=302)
+
+
 async def get_promo_stats():
     """Статистика промокодов"""
     data = {"promos": [], "usages": [], "error": None}
@@ -599,27 +664,6 @@ def render_promo_page(data: dict) -> str:
         </tr>
         """
 
-    # Таблица использований
-    usages_rows = ""
-    for u in data.get("usages", []):
-        tg_id = u.get('telegram_id', '')
-        safe_username = esc(u["username"])
-        tg_link = f'<a href="tg://user?id={tg_id}" style="color:#0d6efd">{safe_username}</a>' if tg_id else safe_username
-        usages_rows += f"""
-        <tr>
-            <td>{esc(u['used_at'])}</td>
-            <td><code>{esc(u['code'])}</code></td>
-            <td>{tg_link}</td>
-            <td><code>{tg_id}</code></td>
-            <td>
-                <a href="/promo/reset-usage/{u['id']}" class="btn-small btn-danger"
-                   onclick="return confirm('Сбросить промокод для {safe_username}?\\n\\nЭто удалит использование промокода, подписку и VPN ключи пользователя.')">
-                   🔄 Сбросить
-                </a>
-            </td>
-        </tr>
-        """
-
     return f"""
 <!DOCTYPE html>
 <html lang="ru">
@@ -644,7 +688,6 @@ def render_promo_page(data: dict) -> str:
             <h1>🎁 Промокоды</h1>
             <nav>
                 <a href="/">Dashboard</a>
-                <a href="/vpn">VPN ключи</a>
                 <a href="/promo" class="active">Промокоды</a>
                 <a href="/referrals">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -766,18 +809,6 @@ def render_promo_page(data: dict) -> str:
                 </thead>
                 <tbody>
                     {promos_rows if promos_rows else "<tr><td colspan='8' class='empty'>Нет промокодов</td></tr>"}
-                </tbody>
-            </table>
-        </div>
-
-        <div class="section">
-            <h2>Последние использования</h2>
-            <table>
-                <thead>
-                    <tr><th>Дата</th><th>Промокод</th><th>Пользователь</th><th>Telegram ID</th><th>Действия</th></tr>
-                </thead>
-                <tbody>
-                    {usages_rows if usages_rows else "<tr><td colspan='5' class='empty'>Нет данных</td></tr>"}
                 </tbody>
             </table>
         </div>
@@ -1394,8 +1425,7 @@ async def get_jarvis_stats():
                     (SELECT expires_at FROM subscriptions WHERE user_id = u.id AND status = 'active' ORDER BY expires_at DESC LIMIT 1) as sub_expires,
                     u.vpn_trial_used,
                     u.vpn_trial_expires,
-                    (SELECT pc.code FROM promo_code_usages pcu JOIN promo_codes pc ON pcu.promo_code_id = pc.id WHERE pcu.user_id = u.id ORDER BY pcu.used_at DESC LIMIT 1) as promo_code,
-                    u.is_blocked
+                    (SELECT pc.code FROM promo_code_usages pcu JOIN promo_codes pc ON pcu.promo_code_id = pc.id WHERE pcu.user_id = u.id ORDER BY pcu.used_at DESC LIMIT 1) as promo_code
                 FROM users u
                 ORDER BY messages DESC
             """)
@@ -1410,10 +1440,15 @@ async def get_jarvis_stats():
                     display_name = f"ID: {row[1]}"
 
                 # Определяем план подписки
-                sub_plan = row[18]
-                vpn_trial_used = row[20]
-                vpn_trial_expires = row[21]
-                sub_expires = row[19]
+                # Индексы: 0-id, 1-tg_id, 2-username, 3-first_name, 4-calendar, 5-created_at
+                # 6-last_activity, 7-requests, 8-tokens, 9-cost, 10-messages, 11-tasks
+                # 12-diary, 13-reminders, 14-habits, 15-vpn_total, 16-vpn_active
+                # 17-sub_plan, 18-sub_expires, 19-vpn_trial_used, 20-vpn_trial_expires, 21-promo_code
+                sub_plan = row[17]
+                sub_expires = row[18]
+                vpn_trial_used = row[19]
+                vpn_trial_expires = row[20]
+                promo_code = row[21]
 
                 if sub_plan:
                     plan = sub_plan
@@ -1446,8 +1481,8 @@ async def get_jarvis_stats():
                     "vpn_keys_active": row[16] or 0,
                     "plan": plan,
                     "expires": expires,
-                    "promo_code": row[22],
-                    "is_blocked": row[23],
+                    "promo_code": promo_code,
+                    "is_blocked": False,  # TODO: добавить колонку в БД
                     "vpn_keys": [],  # будет заполнено ниже
                 })
 
@@ -1614,9 +1649,13 @@ def render_jarvis_dashboard(data: dict) -> str:
         else:
             plan_badge = '<span class="badge badge-none">—</span>'
 
-        # Промокод
+        # Промокод с кнопкой сброса
         promo = u.get('promo_code')
-        promo_text = f'<code>{esc(promo)}</code>' if promo else '—'
+        user_id = u['id']
+        if promo:
+            promo_text = f'<code>{esc(promo)}</code> <a href="/promo/reset/{user_id}" class="action-btn action-danger" onclick="event.stopPropagation(); return confirm(\'Сбросить промокод?\')" title="Сбросить">✕</a>'
+        else:
+            promo_text = '—'
 
         # Календарь
         calendar_icon = '✅' if u.get('calendar') else '❌'
@@ -1624,13 +1663,11 @@ def render_jarvis_dashboard(data: dict) -> str:
         # VPN ключи
         vpn_total = u.get('vpn_keys_total', 0)
         vpn_active = u.get('vpn_keys_active', 0)
-        if vpn_total > 0:
-            vpn_text = f'<span class="vpn-count">{vpn_active}/{vpn_total}</span>'
-        else:
-            vpn_text = '—'
 
-        # Дата истечения
+        # Дата истечения (дата + дней)
         expires = u.get('expires')
+        expire_date_str = '—'
+        days_left = None
         if expires:
             try:
                 if "T" in str(expires):
@@ -1638,19 +1675,17 @@ def render_jarvis_dashboard(data: dict) -> str:
                 else:
                     expire_date = datetime.strptime(str(expires)[:10], "%Y-%m-%d")
                 days_left = (expire_date - datetime.now()).days
+                expire_date_str = expire_date.strftime("%d.%m.%Y")
                 if days_left < 0:
-                    expire_text = '<span class="text-danger">Истёк</span>'
+                    expire_text = f'{expire_date_str} <span class="text-danger">(истёк)</span>'
                 elif days_left <= 3:
-                    expire_text = f'<span class="text-warning">{days_left}д</span>'
+                    expire_text = f'{expire_date_str} <span class="text-warning">({days_left}д)</span>'
                 else:
-                    expire_text = f'{days_left}д'
+                    expire_text = f'{expire_date_str} ({days_left}д)'
             except Exception:
                 expire_text = '—'
         else:
             expire_text = '—'
-
-        # Статистика использования
-        stats = f"{u['messages']}💬 {u['tasks']}📋 {u['diary']}📓 {u['reminders']}🔔 {u['habits']}✅"
 
         # Заблокирован?
         blocked_class = ' user-blocked' if u.get('is_blocked') else ''
@@ -1678,47 +1713,52 @@ def render_jarvis_dashboard(data: dict) -> str:
         else:
             vpn_keys_html = '<div class="no-data">Нет VPN ключей</div>'
 
-        # Действия с пользователем
-        user_id = u['id']
-        block_action = f'<a href="/user/unblock/{user_id}" class="action-btn" title="Разблокировать">🔓</a>' if u.get('is_blocked') else f'<a href="/user/block/{user_id}" class="action-btn action-danger" onclick="return confirm(\'Заблокировать пользователя?\')" title="Заблокировать">🚫</a>'
+        # Действия с пользователем (удаление)
+        delete_action = f'<a href="/user/delete/{user_id}" class="action-btn action-danger" onclick="return confirm(\'Удалить пользователя? Все данные будут удалены!\')" title="Удалить">🗑</a>'
 
         users_rows += f'''
         <tr class="user-row{blocked_class}" onclick="toggleRow({i})">
             <td>{i}</td>
             <td>{tg_link}</td>
-            <td><code>{tg_id}</code></td>
             <td>{plan_badge}</td>
             <td>{promo_text}</td>
-            <td>{calendar_icon}</td>
-            <td>{vpn_text}</td>
-            <td class="stats-cell">{stats}</td>
             <td>{expire_text}</td>
-            <td>{u["requests"]:,} <span class="cost">(${u["cost"]:.2f})</span></td>
             <td class="expand-icon" id="expand-{i}">▼</td>
+            <td onclick="event.stopPropagation();">{delete_action}</td>
         </tr>
         <tr class="detail-row" id="detail-{i}" style="display: none;">
-            <td colspan="11">
+            <td colspan="7">
                 <div class="detail-panel">
                     <div class="detail-section">
-                        <h4>🔐 VPN ключи</h4>
+                        <h4>🔐 VPN ключи ({vpn_active}/{vpn_total})</h4>
                         {vpn_keys_html}
                     </div>
+                    <div class="detail-section detail-section-2col">
+                        <h4>📊 Статистика</h4>
+                        <div class="stats-grid">
+                            <div class="detail-info"><span>💬 Сообщений:</span> {u['messages']}</div>
+                            <div class="detail-info"><span>📋 Задач:</span> {u['tasks']}</div>
+                            <div class="detail-info"><span>📓 Дневник:</span> {u['diary']}</div>
+                            <div class="detail-info"><span>🔔 Напоминаний:</span> {u['reminders']}</div>
+                            <div class="detail-info"><span>✅ Привычек:</span> {u['habits']}</div>
+                            <div class="detail-info"><span>🤖 AI запросов:</span> {u['requests']:,}</div>
+                            <div class="detail-info"><span>🔤 Токенов:</span> {u['tokens']:,}</div>
+                            <div class="detail-info"><span>💰 Стоимость:</span> ${u['cost']:.2f}</div>
+                        </div>
+                    </div>
                     <div class="detail-section">
-                        <h4>📊 Детали</h4>
+                        <h4>📋 Детали</h4>
                         <div class="detail-info">
                             <span>Telegram ID:</span> <code>{tg_id}</code>
+                        </div>
+                        <div class="detail-info">
+                            <span>📅 Календарь:</span> {calendar_icon}
                         </div>
                         <div class="detail-info">
                             <span>Зарегистрирован:</span> {u.get("created_at", "—")}
                         </div>
                         <div class="detail-info">
                             <span>Последняя активность:</span> {u.get("last_activity", "—")}
-                        </div>
-                    </div>
-                    <div class="detail-section">
-                        <h4>⚡ Действия</h4>
-                        <div class="user-actions">
-                            {block_action}
                         </div>
                     </div>
                 </div>
@@ -1755,7 +1795,6 @@ def render_jarvis_dashboard(data: dict) -> str:
             <h1>📊 Dashboard</h1>
             <nav>
                 <a href="/" class="active">Dashboard</a>
-                <a href="/vpn">VPN ключи</a>
                 <a href="/promo">Промокоды</a>
                 <a href="/referrals">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -1794,19 +1833,15 @@ def render_jarvis_dashboard(data: dict) -> str:
                     <tr>
                         <th>#</th>
                         <th>Пользователь</th>
-                        <th>Telegram ID</th>
                         <th title="Тарифный план">Тариф</th>
                         <th title="Использованный промокод">Промокод</th>
-                        <th title="Календарь подключён">📅</th>
-                        <th title="VPN ключи (активных/всего)">🔐</th>
-                        <th title="Статистика использования">Статистика</th>
-                        <th title="Дней до истечения">⏰</th>
-                        <th title="AI запросы и стоимость">AI</th>
+                        <th title="Дата истечения подписки">Истекает</th>
                         <th></th>
+                        <th title="Действия">⚡</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {users_rows if users_rows else "<tr><td colspan='11' class='empty'>Нет пользователей</td></tr>"}
+                    {users_rows if users_rows else "<tr><td colspan='7' class='empty'>Нет пользователей</td></tr>"}
                 </tbody>
             </table>
         </div>
@@ -1916,6 +1951,9 @@ DASHBOARD_STYLES = """
 
     .detail-info { padding: 6px 0; color: #666; font-size: 13px; }
     .detail-info span { color: #999; }
+
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
+    .detail-section-2col { min-width: 300px; }
 
     .user-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .no-data { color: #999; font-size: 13px; font-style: italic; }
