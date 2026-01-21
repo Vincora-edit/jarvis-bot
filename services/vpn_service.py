@@ -34,13 +34,13 @@ from vpn.key_generator import VLESSKeyGenerator, SubscriptionTokenGenerator
 logger = logging.getLogger(__name__)
 
 
-# Лимиты VPN по планам (синхронизированы с marzban_service для совместимости)
+# Лимиты VPN по планам (синхронизированы с services/plans.py)
 VPN_PLAN_LIMITS = {
     "free": {"max_keys": 0, "data_limit_gb": 0, "expire_days": 0},
-    "free_trial": {"max_keys": 1, "data_limit_gb": 0, "expire_days": 14},
-    "basic": {"max_keys": 3, "data_limit_gb": 0, "expire_days": 30},
-    "standard": {"max_keys": 5, "data_limit_gb": 0, "expire_days": 30},
-    "pro": {"max_keys": 10, "data_limit_gb": 0, "expire_days": 30},
+    "free_trial": {"max_keys": 1, "data_limit_gb": 0, "expire_days": 7},  # 7 дней триал
+    "basic": {"max_keys": 1, "data_limit_gb": 0, "expire_days": 30},      # 1 устройство
+    "standard": {"max_keys": 3, "data_limit_gb": 0, "expire_days": 30},   # 3 устройства
+    "pro": {"max_keys": 5, "data_limit_gb": 0, "expire_days": 30},        # 5 устройств
 }
 
 # Алиас для обратной совместимости

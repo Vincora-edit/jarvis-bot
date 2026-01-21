@@ -3456,6 +3456,7 @@ async def handle_set_reminder(action: dict, telegram_id: int = None) -> str:
     """Обработка установки отложенного напоминания"""
     from database.models import Reminder, User
     from sqlalchemy import select
+    from services.limits_service import LimitsService
     import pytz
     import re
 
@@ -3474,6 +3475,12 @@ async def handle_set_reminder(action: dict, telegram_id: int = None) -> str:
 
             if not user:
                 return "❌ Пользователь не найден"
+
+            # Проверяем лимит напоминаний
+            limits = LimitsService(session)
+            can_create, limit_error = await limits.can_create_reminder(user.id)
+            if not can_create:
+                return f"⚠️ {limit_error}"
 
             tz = pytz.timezone(config.TIMEZONE)
             now = datetime.now(tz)
@@ -3574,7 +3581,9 @@ async def handle_set_reminder(action: dict, telegram_id: int = None) -> str:
                 is_sent=False
             )
             session.add(reminder)
-            await session.commit()
+
+            # Увеличиваем счётчик напоминаний
+            await limits.increment_reminder_usage(user.id)
 
             return response_text
 
@@ -3951,6 +3960,24 @@ async def command_booking(message: types.Message, state: FSMContext):
 async def booking_setup_start(call: types.CallbackQuery, state: FSMContext):
     """Начало настройки бронирования"""
     await call.answer()
+
+    # Проверяем лимит ссылок бронирования
+    async with async_session() as session:
+        memory = MemoryService(session)
+        user, _ = await memory.get_or_create_user(call.from_user.id)
+
+        from services.limits_service import LimitsService
+        limits = LimitsService(session)
+        can_create, limit_error = await limits.can_create_booking_link(user.id)
+
+        if not can_create:
+            await call.message.edit_text(
+                f"⚠️ {limit_error}\n\n"
+                "Перейдите на более высокий тариф в разделе /tunnel → Тарифы",
+                parse_mode="Markdown"
+            )
+            return
+
     await state.set_state(BookingStates.waiting_for_duration)
 
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
