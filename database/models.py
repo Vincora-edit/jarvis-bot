@@ -26,6 +26,10 @@ class User(Base):
     vpn_trial_used: Mapped[bool] = mapped_column(default=False)  # Использован ли VPN триал
     vpn_trial_expires: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # Когда истекает триал
 
+    # Трекинг напоминаний об истечении VPN
+    vpn_reminder_3d_sent: Mapped[bool] = mapped_column(default=False)  # Отправлено ли напоминание за 3 дня
+    vpn_reminder_1d_sent: Mapped[bool] = mapped_column(default=False)  # Отправлено ли напоминание за 1 день
+
     # Постоянная скидка (от промокода)
     permanent_discount_percent: Mapped[int] = mapped_column(Integer, default=0)  # Постоянная скидка %
     permanent_discount_promo_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Какой промокод дал скидку
@@ -330,6 +334,10 @@ class Subscription(Base):
 
     # Автопродление
     auto_renew: Mapped[bool] = mapped_column(default=False)
+
+    # Трекинг напоминаний об истечении
+    reminder_3d_sent: Mapped[bool] = mapped_column(default=False)  # Напоминание за 3 дня
+    reminder_1d_sent: Mapped[bool] = mapped_column(default=False)  # Напоминание за 1 день
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

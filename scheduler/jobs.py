@@ -1103,6 +1103,16 @@ def setup_scheduler(bot, get_session):
         replace_existing=True,
     )
 
+    # Напоминания об истечении VPN — 2 раза в день (10:00 и 18:00)
+    for hour in [10, 18]:
+        scheduler.add_job(
+            vpn_expiration_reminder_job,
+            CronTrigger(hour=hour, minute=0),
+            args=[bot, get_session],
+            id=f"vpn_expiration_reminder_{hour}",
+            replace_existing=True,
+        )
+
     scheduler.start()
     logger.info("✅ Планировщик задач запущен")
     logger.info(f"   🔔 Календарь: каждую минуту")
@@ -1112,6 +1122,7 @@ def setup_scheduler(bot, get_session):
     logger.info(f"   ✅ Чек-ин привычек: {config.MORNING_PLAN_HOUR}:30")
     logger.info(f"   🌙 Рефлексия: {config.EVENING_REFLECTION_HOUR}:00")
     logger.info(f"   🔄 Синхронизация VPN: каждый час")
+    logger.info(f"   🔔 Напоминания VPN: 10:00 и 18:00")
     logger.info(f"   🧹 Очистка БД: воскресенье 04:00")
 
     return scheduler
@@ -1138,30 +1149,262 @@ async def cleanup_old_data_job():
         logger.error(f"❌ Ошибка очистки данных: {e}")
 
 
+async def vpn_expiration_reminder_job(bot, get_session):
+    """
+    Напоминания об истечении VPN подписок.
+    Запускается 2 раза в день (10:00 и 18:00).
+
+    Отправляет напоминания:
+    - За 3 дня до истечения триала
+    - За 1 день до истечения триала
+    - За 3 дня до истечения платной подписки
+    - За 1 день до истечения платной подписки
+    """
+    from database import async_session
+    from database.models import User, Subscription
+    from sqlalchemy import select, and_, or_
+    from keyboards.tunnel_kb import renewal_reminder_keyboard
+    from datetime import timedelta
+
+    logger.info("🔔 Запуск проверки напоминаний об истечении VPN")
+
+    now = datetime.utcnow()
+    three_days_later = now + timedelta(days=3)
+    one_day_later = now + timedelta(days=1)
+
+    trial_3d_count = 0
+    trial_1d_count = 0
+    sub_3d_count = 0
+    sub_1d_count = 0
+
+    try:
+        async with async_session() as session:
+            # === 1. НАПОМИНАНИЯ О ТРИАЛЕ ===
+
+            # За 3 дня до истечения триала
+            trial_3d_result = await session.execute(
+                select(User).where(
+                    and_(
+                        User.vpn_trial_used == True,
+                        User.vpn_trial_expires.isnot(None),
+                        User.vpn_trial_expires <= three_days_later,
+                        User.vpn_trial_expires > now,
+                        User.vpn_reminder_3d_sent == False
+                    )
+                )
+            )
+            trial_3d_users = trial_3d_result.scalars().all()
+
+            for user in trial_3d_users:
+                try:
+                    days_left = (user.vpn_trial_expires - now).days
+                    if days_left <= 0:
+                        days_left = 1
+
+                    message = (
+                        f"⏰ *Напоминание о VPN*\n\n"
+                        f"Ваш бесплатный период заканчивается через *{days_left} дн.*\n\n"
+                        f"Чтобы продолжить пользоваться VPN без ограничений, "
+                        f"оформите подписку или введите промокод."
+                    )
+
+                    await bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode="Markdown",
+                        reply_markup=renewal_reminder_keyboard(is_trial=True)
+                    )
+
+                    user.vpn_reminder_3d_sent = True
+                    trial_3d_count += 1
+                    logger.info(f"📬 Напоминание (триал 3д) отправлено {user.telegram_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки напоминания {user.telegram_id}: {e}")
+
+            # За 1 день до истечения триала
+            trial_1d_result = await session.execute(
+                select(User).where(
+                    and_(
+                        User.vpn_trial_used == True,
+                        User.vpn_trial_expires.isnot(None),
+                        User.vpn_trial_expires <= one_day_later,
+                        User.vpn_trial_expires > now,
+                        User.vpn_reminder_1d_sent == False
+                    )
+                )
+            )
+            trial_1d_users = trial_1d_result.scalars().all()
+
+            for user in trial_1d_users:
+                try:
+                    hours_left = int((user.vpn_trial_expires - now).total_seconds() / 3600)
+                    if hours_left <= 0:
+                        hours_left = 1
+
+                    message = (
+                        f"⚠️ *VPN отключится через {hours_left} ч.*\n\n"
+                        f"Бесплатный период почти закончился!\n\n"
+                        f"Оформите подписку сейчас, чтобы не потерять доступ к VPN."
+                    )
+
+                    await bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode="Markdown",
+                        reply_markup=renewal_reminder_keyboard(is_trial=True)
+                    )
+
+                    user.vpn_reminder_1d_sent = True
+                    trial_1d_count += 1
+                    logger.info(f"📬 Напоминание (триал 1д) отправлено {user.telegram_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки напоминания {user.telegram_id}: {e}")
+
+            # === 2. НАПОМИНАНИЯ О ПЛАТНЫХ ПОДПИСКАХ ===
+
+            # За 3 дня до истечения подписки
+            sub_3d_result = await session.execute(
+                select(Subscription, User).join(
+                    User, User.id == Subscription.user_id
+                ).where(
+                    and_(
+                        Subscription.status == "active",
+                        Subscription.plan != "free_trial",
+                        Subscription.expires_at.isnot(None),
+                        Subscription.expires_at <= three_days_later,
+                        Subscription.expires_at > now,
+                        Subscription.reminder_3d_sent == False
+                    )
+                )
+            )
+            sub_3d_rows = sub_3d_result.all()
+
+            for sub, user in sub_3d_rows:
+                try:
+                    days_left = (sub.expires_at - now).days
+                    if days_left <= 0:
+                        days_left = 1
+
+                    plan_names = {
+                        "basic": "Базовый",
+                        "standard": "Стандарт",
+                        "pro": "Про"
+                    }
+                    plan_name = plan_names.get(sub.plan, sub.plan)
+
+                    message = (
+                        f"⏰ *Напоминание о VPN*\n\n"
+                        f"Ваша подписка *{plan_name}* заканчивается через *{days_left} дн.*\n\n"
+                        f"Продлите подписку, чтобы не потерять доступ к VPN."
+                    )
+
+                    await bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode="Markdown",
+                        reply_markup=renewal_reminder_keyboard(is_trial=False)
+                    )
+
+                    sub.reminder_3d_sent = True
+                    sub_3d_count += 1
+                    logger.info(f"📬 Напоминание (подписка 3д) отправлено {user.telegram_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки напоминания {user.telegram_id}: {e}")
+
+            # За 1 день до истечения подписки
+            sub_1d_result = await session.execute(
+                select(Subscription, User).join(
+                    User, User.id == Subscription.user_id
+                ).where(
+                    and_(
+                        Subscription.status == "active",
+                        Subscription.plan != "free_trial",
+                        Subscription.expires_at.isnot(None),
+                        Subscription.expires_at <= one_day_later,
+                        Subscription.expires_at > now,
+                        Subscription.reminder_1d_sent == False
+                    )
+                )
+            )
+            sub_1d_rows = sub_1d_result.all()
+
+            for sub, user in sub_1d_rows:
+                try:
+                    hours_left = int((sub.expires_at - now).total_seconds() / 3600)
+                    if hours_left <= 0:
+                        hours_left = 1
+
+                    plan_names = {
+                        "basic": "Базовый",
+                        "standard": "Стандарт",
+                        "pro": "Про"
+                    }
+                    plan_name = plan_names.get(sub.plan, sub.plan)
+
+                    message = (
+                        f"⚠️ *VPN отключится через {hours_left} ч.*\n\n"
+                        f"Подписка *{plan_name}* почти закончилась!\n\n"
+                        f"Продлите сейчас, чтобы не потерять доступ."
+                    )
+
+                    await bot.send_message(
+                        user.telegram_id,
+                        message,
+                        parse_mode="Markdown",
+                        reply_markup=renewal_reminder_keyboard(is_trial=False)
+                    )
+
+                    sub.reminder_1d_sent = True
+                    sub_1d_count += 1
+                    logger.info(f"📬 Напоминание (подписка 1д) отправлено {user.telegram_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка отправки напоминания {user.telegram_id}: {e}")
+
+            await session.commit()
+
+        total = trial_3d_count + trial_1d_count + sub_3d_count + sub_1d_count
+        if total > 0:
+            logger.info(
+                f"🔔 Напоминания отправлены: "
+                f"триал 3д={trial_3d_count}, триал 1д={trial_1d_count}, "
+                f"подписка 3д={sub_3d_count}, подписка 1д={sub_1d_count}"
+            )
+        else:
+            logger.info("🔔 Напоминания: нет пользователей для уведомления")
+
+    except Exception as e:
+        logger.error(f"❌ Общая ошибка проверки напоминаний VPN: {e}")
+
+
 async def vpn_subscription_sync_job():
     """
-    Синхронизация VPN подписок между БД бота и Marzban.
+    Синхронизация статусов VPN подписок в БД.
     Запускается каждый час.
 
     Действия:
-    1. Проверяет истекшие подписки в БД бота
-    2. Отключает соответствующих пользователей в Marzban
-    3. Обновляет expire в Marzban для активных подписок (если отличается)
+    1. Помечает истекшие подписки как expired
+    2. Помечает истекшие триалы
+
+    Примечание: Xray сам проверяет expire через subscription URL,
+    поэтому дополнительная синхронизация с VPN сервером не нужна.
     """
     from database import async_session
-    from database.models import Subscription, TunnelKey, User
+    from database.models import Subscription, User
     from sqlalchemy import select, and_
-    from services.marzban_service import marzban_api
 
     logger.info("🔄 Запуск синхронизации VPN подписок")
 
     now = datetime.utcnow()
-    disabled_count = 0
-    updated_count = 0
+    expired_subs_count = 0
+    expired_trials_count = 0
 
     try:
         async with async_session() as session:
-            # 1. Находим все истекшие подписки (expires_at < now и status = active)
+            # 1. Помечаем истекшие подписки
             expired_result = await session.execute(
                 select(Subscription).where(
                     and_(
@@ -1174,79 +1417,17 @@ async def vpn_subscription_sync_job():
             expired_subs = expired_result.scalars().all()
 
             for sub in expired_subs:
-                try:
-                    # Получаем пользователя
-                    user_result = await session.execute(
-                        select(User).where(User.id == sub.user_id)
-                    )
-                    user = user_result.scalar_one_or_none()
-                    if not user:
-                        continue
+                sub.status = "expired"
+                expired_subs_count += 1
+                logger.info(f"🔒 Подписка {sub.id} помечена как expired (user_id={sub.user_id})")
 
-                    # Отключаем в Marzban
-                    success, error = await marzban_api.disable_user(user.telegram_id)
-                    if success:
-                        # Обновляем статус в БД
-                        sub.status = "expired"
-                        disabled_count += 1
-                        logger.info(f"🔒 VPN отключен для user {user.telegram_id} (подписка истекла)")
-                    else:
-                        logger.error(f"❌ Не удалось отключить VPN для {user.telegram_id}: {error}")
-
-                except Exception as e:
-                    logger.error(f"❌ Ошибка обработки истекшей подписки {sub.id}: {e}")
-
-            # 2. Синхронизируем expire для активных подписок
-            active_result = await session.execute(
-                select(Subscription, TunnelKey, User).join(
-                    TunnelKey, TunnelKey.user_id == Subscription.user_id
-                ).join(
-                    User, User.id == Subscription.user_id
-                ).where(
-                    and_(
-                        Subscription.status == "active",
-                        TunnelKey.is_active == True
-                    )
-                )
-            )
-            active_rows = active_result.all()
-
-            for sub, key, user in active_rows:
-                try:
-                    # Получаем данные из Marzban
-                    marzban_user, error = await marzban_api.get_user(user.telegram_id)
-                    if not marzban_user:
-                        continue
-
-                    marzban_expire = marzban_user.get("expire")
-
-                    # Вычисляем ожидаемый expire
-                    if sub.expires_at:
-                        expected_expire = int(sub.expires_at.timestamp())
-                    else:
-                        expected_expire = None  # Бессрочная
-
-                    # Если отличается — обновляем
-                    if marzban_expire != expected_expire:
-                        if expected_expire:
-                            days_left = max(1, (sub.expires_at - now).days)
-                            success, error = await marzban_api.update_user_expire(user.telegram_id, days_left)
-                        else:
-                            # Бессрочная — устанавливаем expire=None
-                            # Для этого нужно отдельный метод, пока пропускаем
-                            continue
-
-                        if success:
-                            updated_count += 1
-                            logger.info(f"📅 Обновлен expire для {user.telegram_id}")
-
-                except Exception as e:
-                    logger.error(f"❌ Ошибка синхронизации подписки {sub.id}: {e}")
+            # 2. Сбрасываем флаги напоминаний для новых подписок
+            # (чтобы при продлении снова отправлялись напоминания)
 
             await session.commit()
 
-        if disabled_count > 0 or updated_count > 0:
-            logger.info(f"🔄 Синхронизация VPN завершена: отключено {disabled_count}, обновлено {updated_count}")
+        if expired_subs_count > 0:
+            logger.info(f"🔄 Синхронизация VPN: помечено expired {expired_subs_count} подписок")
         else:
             logger.info("🔄 Синхронизация VPN: всё актуально")
 

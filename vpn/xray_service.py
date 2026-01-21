@@ -125,7 +125,12 @@ class XrayManager:
         """
         try:
             # Используем скрипт xray-user для управления пользователями
-            cmd = f'/usr/local/bin/xray-user add "{user_uuid}" "{email}" "{self.config.default_flow}"'
+            # SECURITY: экранируем параметры через shlex.quote для защиты от command injection
+            import shlex
+            safe_uuid = shlex.quote(str(user_uuid))
+            safe_email = shlex.quote(str(email))
+            safe_flow = shlex.quote(str(self.config.default_flow))
+            cmd = f'/usr/local/bin/xray-user add {safe_uuid} {safe_email} {safe_flow}'
             success, output = await self._ssh_execute(server, cmd)
 
             output = output.strip()
@@ -158,7 +163,10 @@ class XrayManager:
         """
         try:
             # Используем скрипт xray-user для управления пользователями
-            cmd = f'/usr/local/bin/xray-user remove "{email}"'
+            # SECURITY: экранируем параметры через shlex.quote
+            import shlex
+            safe_email = shlex.quote(str(email))
+            cmd = f'/usr/local/bin/xray-user remove {safe_email}'
             success, output = await self._ssh_execute(server, cmd)
 
             output = output.strip()
@@ -197,13 +205,17 @@ class XrayManager:
                 return stats
 
         try:
+            # SECURITY: экранируем параметры
+            import shlex
+            safe_email = shlex.quote(str(email))
+            safe_port = shlex.quote(str(server.xray_api_port))
             cmd = f'''
             /usr/local/bin/xray api stats \
-                --server=127.0.0.1:{server.xray_api_port} \
-                --name="user>>>{email}>>>traffic>>>uplink" 2>/dev/null || echo "0"
+                --server=127.0.0.1:{safe_port} \
+                --name="user>>>"{safe_email}">>>traffic>>>uplink" 2>/dev/null || echo "0"
             /usr/local/bin/xray api stats \
-                --server=127.0.0.1:{server.xray_api_port} \
-                --name="user>>>{email}>>>traffic>>>downlink" 2>/dev/null || echo "0"
+                --server=127.0.0.1:{safe_port} \
+                --name="user>>>"{safe_email}">>>traffic>>>downlink" 2>/dev/null || echo "0"
             '''
 
             success, output = await self._ssh_execute(server, cmd)

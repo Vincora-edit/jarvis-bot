@@ -2,6 +2,7 @@
 Admin Panel для Jarvis Bot
 """
 import os
+import html as html_lib
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, Request, HTTPException, Form
@@ -10,30 +11,64 @@ from starlette.middleware.sessions import SessionMiddleware
 from dotenv import load_dotenv
 
 import aiosqlite
-import aiohttp
-import ssl
 
 load_dotenv()
 
-# Marzban API конфигурация
-MARZBAN_URL = "https://72.56.88.242:8000"
-MARZBAN_USERNAME = "Nfjk3khj43h043gj3\u201343"  # Unicode en-dash in username
-MARZBAN_PASSWORD = "Vincorafjk3n4-423"
+
+def esc(value) -> str:
+    """SECURITY: Экранирование HTML для защиты от XSS"""
+    if value is None:
+        return ""
+    return html_lib.escape(str(value))
+
+# VPN конфигурация (legacy Marzban удалён, используем Xray напрямую)
+
+# Конфигурация
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_SESSION_SECRET = os.getenv("ADMIN_SESSION_SECRET", "")
+
+# SECURITY: Проверяем что секреты заданы
+if not ADMIN_SESSION_SECRET:
+    import secrets
+    ADMIN_SESSION_SECRET = secrets.token_hex(32)
+    print("WARNING: ADMIN_SESSION_SECRET not set in .env, using random value")
+
+if not ADMIN_PASSWORD:
+    print("WARNING: ADMIN_PASSWORD not set in .env!")
 
 app = FastAPI(title="Jarvis Admin Panel")
 app.add_middleware(
     SessionMiddleware,
-    secret_key="jarvis-admin-secret-key-2026",
+    secret_key=ADMIN_SESSION_SECRET,
     session_cookie="admin_session",
-    max_age=86400 * 7,  # 7 дней
+    max_age=86400,  # 1 день (было 7 — слишком долго)
 )
-
-# Конфигурация
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "JarvisAdmin2025")
 JARVIS_DB_PATH = os.getenv("JARVIS_DB_PATH", "/opt/jarvis-bot/bot_database.db")
 
 
 # === AUTH ===
+
+# SECURITY: Rate limiting для защиты от bruteforce
+import time
+from collections import defaultdict
+
+_login_attempts: dict[str, list[float]] = defaultdict(list)
+_LOGIN_RATE_LIMIT = 5  # максимум попыток
+_LOGIN_RATE_WINDOW = 300  # за 5 минут (секунд)
+
+
+def _check_rate_limit(ip: str) -> bool:
+    """Проверить rate limit для IP. Возвращает True если превышен лимит."""
+    now = time.time()
+    # Удаляем старые попытки
+    _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < _LOGIN_RATE_WINDOW]
+    return len(_login_attempts[ip]) >= _LOGIN_RATE_LIMIT
+
+
+def _record_login_attempt(ip: str):
+    """Записать попытку логина"""
+    _login_attempts[ip].append(time.time())
+
 
 def get_current_user(request: Request):
     user = request.session.get("user")
@@ -43,18 +78,33 @@ def get_current_user(request: Request):
 
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: str = None):
+async def login_page(request: Request, error: str = None, blocked: str = None):
     html = LOGIN_HTML
-    if error:
+    if blocked:
+        html = html.replace("<!-- ERROR -->", '<p style="color: #dc3545; text-align: center; margin-bottom: 15px;">Слишком много попыток. Подождите 5 минут.</p>')
+    elif error:
         html = html.replace("<!-- ERROR -->", '<p style="color: #dc3545; text-align: center; margin-bottom: 15px;">Неверный пароль</p>')
     return HTMLResponse(html)
 
 
 @app.post("/login")
 async def login(request: Request, password: str = Form(...)):
-    if password == ADMIN_PASSWORD:
+    client_ip = request.client.host if request.client else "unknown"
+
+    # SECURITY: Проверяем rate limit
+    if _check_rate_limit(client_ip):
+        return RedirectResponse(url="/login?blocked=1", status_code=303)
+
+    _record_login_attempt(client_ip)
+
+    # SECURITY: Сравнение через hmac для защиты от timing attack
+    import hmac
+    if ADMIN_PASSWORD and hmac.compare_digest(password, ADMIN_PASSWORD):
         request.session["user"] = "admin"
+        # Сбрасываем счётчик при успешном входе
+        _login_attempts[client_ip] = []
         return RedirectResponse(url="/", status_code=303)
+
     return RedirectResponse(url="/login?error=1", status_code=303)
 
 
@@ -168,8 +218,8 @@ def render_referrals_page(data: dict) -> str:
         top_rows += f"""
         <tr>
             <td>{i}</td>
-            <td>{r['username']}</td>
-            <td><code>{r['referral_code'] or '-'}</code></td>
+            <td>{esc(r['username'])}</td>
+            <td><code>{esc(r['referral_code']) or '-'}</code></td>
             <td>{r['referral_count']}</td>
             <td>{r['bonus_days']} дн.</td>
         </tr>
@@ -180,9 +230,9 @@ def render_referrals_page(data: dict) -> str:
     for r in data.get("recent_referrals", []):
         recent_rows += f"""
         <tr>
-            <td>{r['created_at']}</td>
-            <td>{r['username']}</td>
-            <td>{r['referrer']}</td>
+            <td>{esc(r['created_at'])}</td>
+            <td>{esc(r['username'])}</td>
+            <td>{esc(r['referrer'])}</td>
         </tr>
         """
 
@@ -530,10 +580,10 @@ def render_promo_page(data: dict) -> str:
         promos_rows += f"""
         <tr>
             <td>{status}</td>
-            <td><code>{p['code']}</code></td>
-            <td>{type_label}</td>
-            <td>{value_text}</td>
-            <td>{p['description']}</td>
+            <td><code>{esc(p['code'])}</code></td>
+            <td>{esc(type_label)}</td>
+            <td>{esc(value_text)}</td>
+            <td>{esc(p['description'])}</td>
             <td style="font-size:11px">{restrictions_text}</td>
             <td>{uses_text}</td>
             <td>
@@ -547,16 +597,17 @@ def render_promo_page(data: dict) -> str:
     usages_rows = ""
     for u in data.get("usages", []):
         tg_id = u.get('telegram_id', '')
-        tg_link = f'<a href="tg://user?id={tg_id}" style="color:#0d6efd">{u["username"]}</a>' if tg_id else u["username"]
+        safe_username = esc(u["username"])
+        tg_link = f'<a href="tg://user?id={tg_id}" style="color:#0d6efd">{safe_username}</a>' if tg_id else safe_username
         usages_rows += f"""
         <tr>
-            <td>{u['used_at']}</td>
-            <td><code>{u['code']}</code></td>
+            <td>{esc(u['used_at'])}</td>
+            <td><code>{esc(u['code'])}</code></td>
             <td>{tg_link}</td>
             <td><code>{tg_id}</code></td>
             <td>
                 <a href="/promo/reset-usage/{u['id']}" class="btn-small btn-danger"
-                   onclick="return confirm('Сбросить промокод для {u['username']}?\\n\\nЭто удалит использование промокода, подписку и VPN ключи пользователя.')">
+                   onclick="return confirm('Сбросить промокод для {safe_username}?\\n\\nЭто удалит использование промокода, подписку и VPN ключи пользователя.')">
                    🔄 Сбросить
                 </a>
             </td>
@@ -758,81 +809,94 @@ def render_promo_page(data: dict) -> str:
     """
 
 
-# === VPN USERS (Marzban) ===
+# === VPN USERS (из БД - Xray) ===
 
-async def get_marzban_token():
-    """Получить токен авторизации Marzban"""
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.post(
-            f"{MARZBAN_URL}/api/admin/token",
-            data={"username": MARZBAN_USERNAME, "password": MARZBAN_PASSWORD}
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("access_token")
-    return None
+async def get_vpn_users():
+    """Получить список VPN пользователей из БД"""
+    users = []
+    error = None
+
+    try:
+        async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Получаем пользователей с VPN ключами
+            cursor = await db.execute("""
+                SELECT
+                    tk.id,
+                    tk.uuid,
+                    tk.email,
+                    tk.device_name,
+                    tk.is_active,
+                    tk.created_at,
+                    u.telegram_id,
+                    u.username,
+                    u.first_name,
+                    u.vpn_trial_used,
+                    u.vpn_trial_expires,
+                    s.plan,
+                    s.expires_at as sub_expires,
+                    s.is_active as sub_active
+                FROM tunnel_keys tk
+                JOIN users u ON tk.user_id = u.id
+                LEFT JOIN subscriptions s ON tk.subscription_id = s.id
+                ORDER BY tk.created_at DESC
+            """)
+            rows = await cursor.fetchall()
+
+            for row in rows:
+                # Определяем дату истечения (подписка или триал)
+                expires_at = None
+                if row["sub_expires"]:
+                    expires_at = row["sub_expires"]
+                elif row["vpn_trial_expires"]:
+                    expires_at = row["vpn_trial_expires"]
+
+                users.append({
+                    "id": row["id"],
+                    "uuid": row["uuid"],
+                    "email": row["email"],
+                    "device_name": row["device_name"],
+                    "is_active": row["is_active"],
+                    "created_at": row["created_at"],
+                    "telegram_id": row["telegram_id"],
+                    "username": row["username"],
+                    "first_name": row["first_name"],
+                    "plan": row["plan"] or ("trial" if row["vpn_trial_used"] else None),
+                    "expires_at": expires_at,
+                    "sub_active": row["sub_active"],
+                })
+
+    except Exception as e:
+        error = str(e)
+
+    return users, error
 
 
-async def get_marzban_users():
-    """Получить список пользователей из Marzban"""
-    token = await get_marzban_token()
-    if not token:
-        return None, "Не удалось авторизоваться в Marzban"
-
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.get(
-            f"{MARZBAN_URL}/api/users",
-            headers={"Authorization": f"Bearer {token}"}
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("users", []), None
-            return None, f"Ошибка API: {resp.status}"
-
-
-async def marzban_toggle_user(username: str, disable: bool):
-    """Включить/отключить пользователя в Marzban"""
-    token = await get_marzban_token()
-    if not token:
+async def toggle_vpn_key(key_id: int):
+    """Включить/отключить VPN ключ"""
+    try:
+        async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+            await db.execute("""
+                UPDATE tunnel_keys
+                SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END
+                WHERE id = ?
+            """, (key_id,))
+            await db.commit()
+            return True
+    except Exception:
         return False
 
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        status = "disabled" if disable else "active"
-        async with session.put(
-            f"{MARZBAN_URL}/api/user/{username}",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"status": status}
-        ) as resp:
-            return resp.status == 200
 
-
-async def marzban_delete_user(username: str):
-    """Удалить пользователя из Marzban"""
-    token = await get_marzban_token()
-    if not token:
+async def delete_vpn_key(key_id: int):
+    """Удалить VPN ключ"""
+    try:
+        async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+            await db.execute("DELETE FROM tunnel_keys WHERE id = ?", (key_id,))
+            await db.commit()
+            return True
+    except Exception:
         return False
-
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.delete(
-            f"{MARZBAN_URL}/api/user/{username}",
-            headers={"Authorization": f"Bearer {token}"}
-        ) as resp:
-            return resp.status == 200
-
-
-def bytes_to_human(size):
-    """Конвертация байтов в читаемый формат"""
-    if not size or size == 0:
-        return "0"
-    for unit in ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} ПБ"
 
 
 @app.get("/vpn", response_class=HTMLResponse)
@@ -841,36 +905,28 @@ async def vpn_page(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    users, error = await get_marzban_users()
+    users, error = await get_vpn_users()
     html = render_vpn_page(users, error)
     return HTMLResponse(html)
 
 
-@app.get("/vpn/toggle/{username}")
-async def vpn_toggle(request: Request, username: str):
+@app.get("/vpn/toggle/{key_id}")
+async def vpn_toggle(request: Request, key_id: int):
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    # Получаем текущий статус
-    users, _ = await get_marzban_users()
-    if users:
-        for u in users:
-            if u.get("username") == username:
-                is_active = u.get("status") == "active"
-                await marzban_toggle_user(username, disable=is_active)
-                break
-
+    await toggle_vpn_key(key_id)
     return RedirectResponse(url="/vpn", status_code=302)
 
 
-@app.get("/vpn/delete/{username}")
-async def vpn_delete(request: Request, username: str):
+@app.get("/vpn/delete/{key_id}")
+async def vpn_delete(request: Request, key_id: int):
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    await marzban_delete_user(username)
+    await delete_vpn_key(key_id)
     return RedirectResponse(url="/vpn", status_code=302)
 
 
@@ -879,79 +935,78 @@ def render_vpn_page(users: list, error: str) -> str:
 
     # Статистика
     total_users = len(users) if users else 0
-    active_users = sum(1 for u in users if u.get("status") == "active") if users else 0
-    total_traffic = sum(u.get("used_traffic", 0) for u in users) if users else 0
+    active_users = sum(1 for u in users if u.get("is_active")) if users else 0
+    trial_users = sum(1 for u in users if u.get("plan") == "trial") if users else 0
 
     # Таблица пользователей
     users_rows = ""
     if users:
         for u in users:
-            username = u.get("username", "")
-            status = u.get("status", "unknown")
-            status_emoji = "🟢" if status == "active" else "🔴" if status == "disabled" else "⚪"
+            is_active = u.get("is_active")
+            status_emoji = "🟢" if is_active else "🔴"
 
-            used_traffic = bytes_to_human(u.get("used_traffic", 0))
-            data_limit = u.get("data_limit")
-            limit_text = bytes_to_human(data_limit) if data_limit else "∞"
+            # Имя пользователя для отображения
+            tg_id = u.get("telegram_id", "")
+            username = u.get("username") or u.get("first_name") or f"ID:{tg_id}"
+            if tg_id:
+                tg_display = f'<a href="tg://user?id={tg_id}" style="color:#0d6efd">{esc(username)}</a>'
+            else:
+                tg_display = esc(username)
 
-            expire = u.get("expire")
-            if expire:
-                expire_date = datetime.fromtimestamp(expire)
-                days_left = (expire_date - datetime.now()).days
-                if days_left < 0:
-                    expire_text = f"<span style='color:#dc3545'>Истёк</span>"
-                elif days_left <= 3:
-                    expire_text = f"<span style='color:#ffc107'>{expire_date.strftime('%d.%m.%Y')} ({days_left}д)</span>"
-                else:
-                    expire_text = f"{expire_date.strftime('%d.%m.%Y')} ({days_left}д)"
+            # Устройство
+            device_name = u.get("device_name") or u.get("email") or "-"
+
+            # План
+            plan = u.get("plan")
+            if plan == "trial":
+                plan_text = "<span style='color:#6c757d'>Триал</span>"
+            elif plan:
+                plan_text = f"<span style='color:#28a745'>{esc(plan.upper())}</span>"
+            else:
+                plan_text = "-"
+
+            # Дата истечения
+            expires_at = u.get("expires_at")
+            if expires_at:
+                try:
+                    if "T" in expires_at:
+                        expire_date = datetime.fromisoformat(expires_at.replace("Z", ""))
+                    else:
+                        expire_date = datetime.strptime(expires_at[:10], "%Y-%m-%d")
+                    days_left = (expire_date - datetime.now()).days
+                    if days_left < 0:
+                        expire_text = f"<span style='color:#dc3545'>Истёк</span>"
+                    elif days_left <= 3:
+                        expire_text = f"<span style='color:#ffc107'>{expire_date.strftime('%d.%m.%Y')} ({days_left}д)</span>"
+                    else:
+                        expire_text = f"{expire_date.strftime('%d.%m.%Y')} ({days_left}д)"
+                except Exception:
+                    expire_text = esc(expires_at[:10]) if expires_at else "-"
             else:
                 expire_text = "♾️"
 
-            # Telegram ID и имя из note
-            note = u.get("note") or ""
-            tg_id = ""
-            tg_name = ""
-            if note:
-                if "ID:" in note:
-                    try:
-                        tg_id = note.split("ID:")[1].split(")")[0].strip()
-                    except:
-                        pass
-                if "Telegram:" in note and "(" in note:
-                    try:
-                        tg_name = note.split("Telegram:")[1].split("(")[0].strip()
-                    except:
-                        pass
-
-            if tg_id:
-                display_text = tg_name if tg_name else tg_id
-                tg_display = f'<a href="tg://user?id={tg_id}" style="color:#0d6efd" title="Открыть в Telegram">{display_text}</a>'
+            # Дата создания
+            created = u.get("created_at")
+            if created:
+                created_text = created[:10] if len(created) >= 10 else created
             else:
-                tg_display = "-"
+                created_text = "-"
 
-            online = u.get("online_at")
-            if online:
-                online_text = datetime.fromisoformat(online.replace("Z", "")).strftime("%d.%m %H:%M")
-            else:
-                online_text = "-"
-
-            # ip_limit не поддерживается в Marzban API — всегда ∞
-            devices_text = "∞"
-
-            toggle_text = "Откл" if status == "active" else "Вкл"
+            toggle_text = "Откл" if is_active else "Вкл"
+            key_id = u.get("id")
 
             users_rows += f"""
             <tr>
                 <td>{status_emoji}</td>
-                <td><code>{username}</code></td>
                 <td>{tg_display}</td>
-                <td>{devices_text}</td>
-                <td>{used_traffic} / {limit_text}</td>
+                <td><code>{tg_id}</code></td>
+                <td>{esc(device_name)}</td>
+                <td>{plan_text}</td>
                 <td>{expire_text}</td>
-                <td>{online_text}</td>
+                <td>{created_text}</td>
                 <td>
-                    <a href="/vpn/toggle/{username}" class="btn-small">{toggle_text}</a>
-                    <a href="/vpn/delete/{username}" class="btn-small btn-danger" onclick="return confirm('Удалить пользователя {username}?')">✕</a>
+                    <a href="/vpn/toggle/{key_id}" class="btn-small">{toggle_text}</a>
+                    <a href="/vpn/delete/{key_id}" class="btn-small btn-danger" onclick="return confirm('Удалить VPN ключ?')">✕</a>
                 </td>
             </tr>
             """
@@ -983,41 +1038,41 @@ def render_vpn_page(users: list, error: str) -> str:
         <div class="stats-row">
             <div class="stat-card">
                 <div class="stat-value">{total_users}</div>
-                <div class="stat-label">Всего пользователей</div>
+                <div class="stat-label">Всего ключей</div>
             </div>
             <div class="stat-card green">
                 <div class="stat-value">{active_users}</div>
                 <div class="stat-label">Активных</div>
             </div>
             <div class="stat-card blue">
-                <div class="stat-value">{bytes_to_human(total_traffic)}</div>
-                <div class="stat-label">Общий трафик</div>
+                <div class="stat-value">{trial_users}</div>
+                <div class="stat-label">На триале</div>
             </div>
         </div>
 
         <div class="section">
-            <h2>Пользователи Marzban</h2>
+            <h2>VPN ключи (Xray)</h2>
             <table>
                 <thead>
                     <tr>
                         <th>Статус</th>
-                        <th>Username</th>
-                        <th>Telegram</th>
-                        <th>Устройств</th>
-                        <th>Трафик</th>
+                        <th>Пользователь</th>
+                        <th>Telegram ID</th>
+                        <th>Устройство</th>
+                        <th>План</th>
                         <th>Истекает</th>
-                        <th>Онлайн</th>
+                        <th>Создан</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {users_rows if users_rows else "<tr><td colspan='8' class='empty'>Нет пользователей</td></tr>"}
+                    {users_rows if users_rows else "<tr><td colspan='8' class='empty'>Нет VPN ключей</td></tr>"}
                 </tbody>
             </table>
         </div>
 
         <p class="footer">
-            Данные из <a href="{MARZBAN_URL}" target="_blank" style="color:#6c757d">Marzban</a> •
+            Данные из БД (Xray Reality) •
             Обновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}
         </p>
     </div>

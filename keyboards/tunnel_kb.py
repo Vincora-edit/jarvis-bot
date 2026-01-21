@@ -154,3 +154,19 @@ def promo_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="tunnel:promo")],
         [InlineKeyboardButton(text="◀️ К тарифам", callback_data="tunnel:plans")]
     ])
+
+
+def renewal_reminder_keyboard(is_trial: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура для напоминания о продлении"""
+    buttons = [
+        [InlineKeyboardButton(text="⭐ Выбрать тариф", callback_data="tunnel:plans")],
+        [InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="tunnel:promo")],
+    ]
+
+    if not is_trial:
+        # Для платных подписок добавляем кнопку продления
+        buttons.insert(0, [
+            InlineKeyboardButton(text="💳 Продлить подписку", callback_data="tunnel:renew")
+        ])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
