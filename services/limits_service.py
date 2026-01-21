@@ -96,9 +96,15 @@ class LimitsService:
         plan = await self.get_user_plan(user_id)
         limits = get_plan_limits(plan)
 
-        if limits.booking_links_max == 0:
+        # 0 для free = недоступно, 0 для pro = безлимит
+        # Различаем по плану: free не имеет доступа
+        if plan == "free" and limits.booking_links_max == 0:
             plan_name = get_plan_name(plan)
             return False, f"Бронирование недоступно для плана «{plan_name}». Перейдите на Базовый или выше."
+
+        # Для планов с безлимитом (0) — всегда можно
+        if limits.booking_links_max == 0:
+            return True, "OK"
 
         # Считаем текущие активные ссылки
         result = await self.session.execute(

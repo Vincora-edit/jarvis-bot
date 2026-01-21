@@ -24,3 +24,7 @@ python-multipart==0.0.21
 asyncssh==2.14.2
 itsdangerous==2.2.0
 starlette-session==0.4.3
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0

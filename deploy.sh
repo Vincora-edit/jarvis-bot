@@ -120,8 +120,21 @@ ssh_vpn() {
     sshpass -p "$VPN_PASS" ssh $SSH_OPTS $VPN_USER@$VPN_SERVER
 }
 
-# Полный деплой
+# Запуск тестов
+run_tests() {
+    echo "🧪 Running tests..."
+    if python3 -m pytest tests/ -v --tb=short; then
+        echo "✅ All tests passed!"
+        return 0
+    else
+        echo "❌ Tests failed! Aborting deploy."
+        return 1
+    fi
+}
+
+# Полный деплой (с тестами)
 deploy_all() {
+    run_tests || exit 1
     deploy_bot
     deploy_admin
     status
@@ -172,6 +185,9 @@ case "$1" in
         shift
         run_cmd "$@"
         ;;
+    test)
+        run_tests
+        ;;
     *)
         echo "Jarvis Deploy Script"
         echo ""
@@ -180,7 +196,8 @@ case "$1" in
         echo "Commands:"
         echo "  bot        - Deploy bot only"
         echo "  admin      - Deploy admin panel only"
-        echo "  all        - Deploy everything"
+        echo "  all        - Deploy everything (runs tests first)"
+        echo "  test       - Run tests only"
         echo "  status     - Show services status"
         echo "  logs [n]   - Show bot logs (default: 50 lines)"
         echo "  logs-admin - Show admin panel logs"
