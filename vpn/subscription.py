@@ -78,12 +78,12 @@ async def get_subscription(token: str, request: Request):
             if not user:
                 raise HTTPException(status_code=404, detail="Not found")
 
-            # Проверяем активную подписку
+            # Проверяем активную подписку (берём последнюю по дате истечения)
             sub_result = await session.execute(
                 select(Subscription).where(
                     Subscription.user_id == user_id,
                     Subscription.status == "active"
-                )
+                ).order_by(Subscription.expires_at.desc()).limit(1)
             )
             subscription = sub_result.scalar_one_or_none()
 
@@ -126,14 +126,14 @@ async def get_subscription(token: str, request: Request):
             key_gen = get_key_generator()
 
             for tunnel_key in keys:
-                # Проверяем тип ключа по marzban_username
+                # Проверяем тип ключа по xray_email
                 is_new_key = (
-                    tunnel_key.marzban_username and
-                    tunnel_key.marzban_username.startswith("jarvis_")
+                    tunnel_key.xray_email and
+                    tunnel_key.xray_email.startswith("jarvis_")
                 )
                 is_legacy_marzban = (
-                    tunnel_key.marzban_username and
-                    tunnel_key.marzban_username.startswith("tg_user_")
+                    tunnel_key.xray_email and
+                    tunnel_key.xray_email.startswith("tg_user_")
                 )
 
                 if is_legacy_marzban:
@@ -142,11 +142,11 @@ async def get_subscription(token: str, request: Request):
                     continue
 
                 # Генерируем VLESS URL для новых ключей
-                # Извлекаем device_id из marzban_username (формат: jarvis_123_d11)
+                # Извлекаем device_id из xray_email (формат: jarvis_123_d11)
                 device_id = 1
-                if tunnel_key.marzban_username and "_d" in tunnel_key.marzban_username:
+                if tunnel_key.xray_email and "_d" in tunnel_key.xray_email:
                     try:
-                        device_id = int(tunnel_key.marzban_username.split("_d")[-1])
+                        device_id = int(tunnel_key.xray_email.split("_d")[-1])
                     except ValueError:
                         pass
 

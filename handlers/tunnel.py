@@ -132,6 +132,88 @@ async def cmd_tunnel(message: types.Message):
         await message.answer("❌ Произошла ошибка. Попробуйте позже.")
 
 
+# === КОМАНДА /subscription ===
+
+@router.message(Command("subscription"))
+@router.message(Command("подписка"))
+async def cmd_subscription(message: types.Message):
+    """Информация о подписке на Jarvis"""
+    try:
+        async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(message.from_user.id)
+
+            tunnel_service = TunnelService(session)
+            limits_service = LimitsService(session)
+
+            plan = await tunnel_service.get_user_plan(user.id)
+            sub = await tunnel_service.get_user_subscription(user.id)
+
+            can_vpn, vpn_status, vpn_devices = await limits_service.can_use_vpn(user.id)
+
+            # Формируем информацию о текущем плане
+            from services.plans import get_plan_limits, PLAN_NAMES
+
+            limits = get_plan_limits(plan)
+            plan_name = PLAN_NAMES.get(plan, plan.capitalize())
+
+            # Статус подписки
+            if vpn_status.startswith("trial_active:"):
+                days_left = int(vpn_status.split(":")[1])
+                status_text = f"🎁 *Пробный период*\nОсталось: {days_left} дн."
+            elif sub and sub.expires_at:
+                days_left = (sub.expires_at - datetime.utcnow()).days
+                status_text = f"✅ *Активна до* {sub.expires_at.strftime('%d.%m.%Y')} ({days_left} дн.)"
+            elif plan == "free":
+                status_text = "📦 *Бесплатный план*"
+            else:
+                status_text = f"✅ *План: {plan_name}*"
+
+            # Лимиты плана
+            ai_limit = "безлимит" if limits.ai_requests_per_day == 0 else str(limits.ai_requests_per_day)
+            habits_limit = "безлимит" if limits.habits_max == 0 else str(limits.habits_max)
+            reminders_limit = "безлимит" if limits.reminders_per_day == 0 else str(limits.reminders_per_day)
+
+            text = (
+                f"📊 *Ваша подписка на Jarvis*\n\n"
+                f"{status_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"*Возможности плана:*\n"
+                f"🤖 AI запросов/день: {ai_limit}\n"
+                f"✅ Привычек: {habits_limit}\n"
+                f"🔔 Напоминаний/день: {reminders_limit}\n"
+                f"🔐 VPN устройств: {limits.vpn_devices or 'нет'}\n"
+                f"📊 Аналитика: {'да' if limits.analytics_enabled else 'нет'}\n"
+            )
+
+            # Кнопки
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+            buttons = []
+            if plan == "free" or (sub and sub.expires_at and (sub.expires_at - datetime.utcnow()).days < 30):
+                buttons.append([
+                    InlineKeyboardButton(text="💳 Улучшить план", callback_data="tunnel:plans")
+                ])
+
+            if not user.vpn_trial_used and plan == "free":
+                buttons.append([
+                    InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="tunnel:trial")
+                ])
+
+            buttons.append([
+                InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="tunnel:promo")
+            ])
+
+            await message.answer(
+                text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+            )
+    except Exception as e:
+        logger.error(f"Error in cmd_subscription: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже.")
+
+
 # === CALLBACK: МЕНЮ ===
 
 @router.callback_query(F.data == "tunnel:menu")
@@ -723,13 +805,26 @@ async def callback_plans(callback: types.CallbackQuery):
     """Показать тарифы"""
     try:
         text = (
-            "💳 *Выберите тариф*\n\n"
-            "📦 *Basic* — 299₽/мес\n"
-            "└ 1 устройство, безлимит трафика\n\n"
-            "🚀 *Pro* — 599₽/мес\n"
-            "└ 3 устройства, безлимит трафика\n\n"
-            "💎 *Premium* — 999₽/мес\n"
-            "└ 5 устройств, безлимит трафика\n\n"
+            "💳 *Подписка на Jarvis*\n\n"
+            "Подписка открывает все возможности:\n"
+            "• AI-ассистент без ограничений\n"
+            "• VPN для всех устройств\n"
+            "• Расширенные лимиты\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📦 *Basic* — 199₽/мес\n"
+            "└ 50 AI запросов/день\n"
+            "└ 1 VPN устройство\n"
+            "└ 5 привычек, 10 напоминаний\n\n"
+            "🚀 *Standard* — 399₽/мес\n"
+            "└ 100 AI запросов/день\n"
+            "└ 3 VPN устройства\n"
+            "└ 10 привычек, 20 напоминаний\n"
+            "└ Недельная аналитика\n\n"
+            "💎 *Pro* — 799₽/мес\n"
+            "└ Безлимит AI\n"
+            "└ 5 VPN устройств\n"
+            "└ Всё без ограничений\n"
+            "└ AI-инсайты\n\n"
             "🎁 Есть промокод? Нажмите кнопку ниже"
         )
 

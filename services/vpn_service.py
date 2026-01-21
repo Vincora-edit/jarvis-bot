@@ -101,12 +101,12 @@ class VPNService:
     # === ПОДПИСКИ ===
 
     async def get_user_subscription(self, user_id: int) -> Optional[Subscription]:
-        """Получить активную подписку пользователя"""
+        """Получить активную подписку пользователя (последнюю по дате истечения)"""
         result = await self.session.execute(
             select(Subscription).where(
                 Subscription.user_id == user_id,
                 Subscription.status == "active"
-            ).order_by(Subscription.expires_at.desc())
+            ).order_by(Subscription.expires_at.desc()).limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -151,12 +151,12 @@ class VPNService:
         if not all_keys:
             return 1
 
-        # Извлекаем номера из marzban_username
+        # Извлекаем номера из xray_email
         max_num = 0
         for key in all_keys:
-            if key.marzban_username and "_d" in key.marzban_username:
+            if key.xray_email and "_d" in key.xray_email:
                 try:
-                    num = int(key.marzban_username.split("_d")[-1])
+                    num = int(key.xray_email.split("_d")[-1])
                     max_num = max(max_num, num)
                 except ValueError:
                     pass
@@ -256,8 +256,8 @@ class VPNService:
 
             tunnel_key = TunnelKey(
                 user_id=user_id,
-                marzban_username=username,
-                device_name=f"{device_name} {device_num}",
+                xray_email=username,
+                device_name=device_name,
                 subscription_url=sub_url,
                 is_active=True,
             )
@@ -318,8 +318,8 @@ class VPNService:
 
         tunnel_key = TunnelKey(
             user_id=user_id,
-            marzban_username=username,
-            device_name=f"{device_name} {device_num}",
+            xray_email=username,
+            device_name=device_name,
             subscription_url=sub_url,
             is_active=True,
         )
@@ -342,11 +342,11 @@ class VPNService:
             return False
 
         # Удаляем из Xray если native режим
-        if self._use_native and key.marzban_username:
+        if self._use_native and key.xray_email:
             # Извлекаем device_id из username
-            if "_d" in key.marzban_username:
+            if "_d" in key.xray_email:
                 try:
-                    device_id = int(key.marzban_username.split("_d")[-1])
+                    device_id = int(key.xray_email.split("_d")[-1])
                     # Пробуем удалить со всех серверов
                     for server in self.config.servers:
                         await self.xray.revoke_key(user_id, device_id, server.id)

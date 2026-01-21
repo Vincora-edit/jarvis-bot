@@ -174,25 +174,8 @@ async def command_start(message: types.Message):
             reply_markup=keyboard
         )
 
-    # Если календарь не подключён — предлагаем подключить
-    elif not calendar_connected:
-        # Проверяем, настроен ли OAuth
-        if config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
-            oauth = GoogleOAuthService()
-            auth_url = oauth.create_auth_url(message.from_user.id)
-
-            await message.answer(
-                "📅 **Подключи Google Calendar**\n\n"
-                "Чтобы я мог работать с твоим расписанием, "
-                "подключи свой Google Календарь:\n\n"
-                f"[👉 Подключить календарь]({auth_url})\n\n"
-                "После подключения я смогу:\n"
-                "• Показывать твои события\n"
-                "• Создавать новые встречи\n"
-                "• Напоминать о предстоящих делах",
-                parse_mode="Markdown",
-                disable_web_page_preview=True
-            )
+    # Для существующих пользователей — не навязываем календарь,
+    # они сами могут подключить через /connect_calendar или /tunnel для VPN
 
 
 HELP_TEXT = """
@@ -3676,18 +3659,84 @@ async def wh_init_end_time(call: types.CallbackQuery, state: FSMContext):
         parse_mode="Markdown"
     )
 
-    # Предлагаем подключить календарь
-    if not calendar_connected and config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
+    # Предлагаем выбрать: подключить календарь или настроить VPN
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    keyboard_buttons = []
+
+    # Кнопка календаря (если OAuth настроен)
+    if config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="📅 Подключить календарь", callback_data="onboard_calendar")
+        ])
+
+    # Кнопка VPN
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="🔐 Настроить VPN", callback_data="onboard_vpn")
+    ])
+
+    # Кнопка пропустить
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data="onboard_skip")
+    ])
+
+    await call.message.answer(
+        "🚀 **Что настроим первым?**\n\n"
+        "📅 *Календарь* — синхронизирую твоё расписание с Google Calendar\n\n"
+        "🔐 *VPN* — безопасный доступ к интернету, 7 дней бесплатно",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    )
+
+
+@router.callback_query(F.data == "onboard_calendar")
+async def onboard_calendar(call: types.CallbackQuery):
+    """Онбординг: подключение календаря"""
+    from services.google_oauth_service import GoogleOAuthService
+
+    if config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
         oauth = GoogleOAuthService()
         auth_url = oauth.create_auth_url(call.from_user.id)
 
-        await call.message.answer(
+        await call.message.edit_text(
             "📅 **Подключи Google Calendar**\n\n"
-            "Чтобы я мог работать с твоим расписанием:\n\n"
-            f"[👉 Подключить календарь]({auth_url})",
+            "Перейди по ссылке и разреши доступ к календарю:\n\n"
+            f"[👉 Подключить календарь]({auth_url})\n\n"
+            "После подключения я смогу:\n"
+            "• Показывать твои события\n"
+            "• Создавать новые встречи\n"
+            "• Напоминать о предстоящих делах",
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
+    else:
+        await call.answer("Календарь временно недоступен", show_alert=True)
+
+
+@router.callback_query(F.data == "onboard_vpn")
+async def onboard_vpn(call: types.CallbackQuery):
+    """Онбординг: настройка VPN"""
+    # Перенаправляем в меню VPN
+    await call.message.edit_text(
+        "🔐 **Защищённый туннель**\n\n"
+        "Перехожу в настройки VPN...",
+        parse_mode="Markdown"
+    )
+
+    # Симулируем команду /tunnel
+    from handlers.tunnel import cmd_tunnel
+    await cmd_tunnel(call.message)
+
+
+@router.callback_query(F.data == "onboard_skip")
+async def onboard_skip(call: types.CallbackQuery):
+    """Онбординг: пропустить настройку"""
+    await call.message.edit_text(
+        "✅ Готово! Ты всегда можешь настроить эти функции позже:\n\n"
+        "📅 /connect\\_calendar — подключить Google Calendar\n"
+        "🔐 /tunnel — настроить VPN",
+        parse_mode="Markdown"
+    )
 
 
 @router.callback_query(F.data.startswith("wh_start_"))

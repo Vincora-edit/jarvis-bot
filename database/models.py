@@ -349,13 +349,13 @@ class TunnelKey(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
-    # Имя пользователя в Marzban (tg_user_123456)
-    marzban_username: Mapped[str] = mapped_column(String(100), unique=True)
+    # Email пользователя в Xray (jarvis_123_d1)
+    xray_email: Mapped[str] = mapped_column(String(100), unique=True)
 
     # Название устройства
     device_name: Mapped[str] = mapped_column(String(50), default="Device")
 
-    # Subscription URL от Marzban
+    # Subscription URL для клиента
     subscription_url: Mapped[str] = mapped_column(Text)
 
     # Статус

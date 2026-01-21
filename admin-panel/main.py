@@ -97,14 +97,20 @@ async def login(request: Request, password: str = Form(...)):
 
     _record_login_attempt(client_ip)
 
+    # DEBUG: Логируем попытку входа
+    print(f"LOGIN ATTEMPT: ip={client_ip}, password_len={len(password)}, stored_len={len(ADMIN_PASSWORD) if ADMIN_PASSWORD else 0}")
+    print(f"DEBUG: password={repr(password)}, stored={repr(ADMIN_PASSWORD)}")
+
     # SECURITY: Сравнение через hmac для защиты от timing attack
     import hmac
     if ADMIN_PASSWORD and hmac.compare_digest(password, ADMIN_PASSWORD):
         request.session["user"] = "admin"
         # Сбрасываем счётчик при успешном входе
         _login_attempts[client_ip] = []
+        print(f"LOGIN SUCCESS: ip={client_ip}")
         return RedirectResponse(url="/", status_code=303)
 
+    print(f"LOGIN FAILED: ip={client_ip}")
     return RedirectResponse(url="/login?error=1", status_code=303)
 
 
@@ -251,7 +257,7 @@ def render_referrals_page(data: dict) -> str:
             <h1>👥 Рефералы</h1>
             <nav>
                 <a href="/">Статистика</a>
-                <a href="/vpn">VPN</a>
+                <a href="/vpn">Подписки</a>
                 <a href="/promo">Промокоды</a>
                 <a href="/referrals" class="active">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -638,7 +644,7 @@ def render_promo_page(data: dict) -> str:
             <h1>🎁 Промокоды</h1>
             <nav>
                 <a href="/">Статистика</a>
-                <a href="/vpn">VPN</a>
+                <a href="/vpn">Подписки</a>
                 <a href="/promo" class="active">Промокоды</a>
                 <a href="/referrals">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -824,9 +830,9 @@ async def get_vpn_users():
             cursor = await db.execute("""
                 SELECT
                     tk.id,
-                    tk.uuid,
-                    tk.email,
+                    tk.xray_email,
                     tk.device_name,
+                    tk.subscription_url,
                     tk.is_active,
                     tk.created_at,
                     u.telegram_id,
@@ -835,11 +841,10 @@ async def get_vpn_users():
                     u.vpn_trial_used,
                     u.vpn_trial_expires,
                     s.plan,
-                    s.expires_at as sub_expires,
-                    s.is_active as sub_active
+                    s.expires_at as sub_expires
                 FROM tunnel_keys tk
                 JOIN users u ON tk.user_id = u.id
-                LEFT JOIN subscriptions s ON tk.subscription_id = s.id
+                LEFT JOIN subscriptions s ON s.user_id = u.id AND s.status = 'active'
                 ORDER BY tk.created_at DESC
             """)
             rows = await cursor.fetchall()
@@ -854,9 +859,8 @@ async def get_vpn_users():
 
                 users.append({
                     "id": row["id"],
-                    "uuid": row["uuid"],
-                    "email": row["email"],
                     "device_name": row["device_name"],
+                    "subscription_url": row["subscription_url"],
                     "is_active": row["is_active"],
                     "created_at": row["created_at"],
                     "telegram_id": row["telegram_id"],
@@ -864,7 +868,6 @@ async def get_vpn_users():
                     "first_name": row["first_name"],
                     "plan": row["plan"] or ("trial" if row["vpn_trial_used"] else None),
                     "expires_at": expires_at,
-                    "sub_active": row["sub_active"],
                 })
 
     except Exception as e:
@@ -889,24 +892,96 @@ async def toggle_vpn_key(key_id: int):
 
 
 async def delete_vpn_key(key_id: int):
-    """Удалить VPN ключ"""
+    """Удалить VPN ключ из БД и с VPN сервера"""
     try:
         async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+            # Получаем информацию о ключе для удаления с сервера
+            cursor = await db.execute(
+                "SELECT xray_email FROM tunnel_keys WHERE id = ?",
+                (key_id,)
+            )
+            row = await cursor.fetchone()
+
+            if row and row[0]:
+                username = row[0]  # Это email для Xray (user_XXX_dN)
+                # Удаляем с VPN сервера через SSH
+                await _delete_from_vpn_server(username)
+
+            # Удаляем из БД
             await db.execute("DELETE FROM tunnel_keys WHERE id = ?", (key_id,))
             await db.commit()
             return True
-    except Exception:
+    except Exception as e:
+        print(f"Error deleting VPN key: {e}")
         return False
 
 
+async def _delete_from_vpn_server(username: str):
+    """Удалить пользователя с VPN сервера через SSH"""
+    import asyncssh
+    import json
+    import shlex
+
+    # Получаем конфиг VPN сервера из переменных окружения
+    vpn_servers_json = os.getenv("VPN_SERVERS", "[]")
+    try:
+        servers = json.loads(vpn_servers_json)
+        if not servers:
+            print("No VPN servers configured")
+            return
+
+        server = servers[0]  # Берём первый сервер
+        host = server.get("host")
+        ssh_user = server.get("ssh_user", "root")
+        ssh_password = server.get("ssh_password")
+        ssh_port = server.get("ssh_port", 22)
+
+        if not host or not ssh_password:
+            print("VPN server credentials not configured")
+            return
+
+        # Подключаемся по SSH и удаляем пользователя
+        safe_username = shlex.quote(username)
+        cmd = f'/usr/local/bin/xray-user remove {safe_username}'
+
+        async with asyncssh.connect(
+            host,
+            port=ssh_port,
+            username=ssh_user,
+            password=ssh_password,
+            known_hosts=None
+        ) as conn:
+            result = await conn.run(cmd, check=False)
+            output = result.stdout.strip()
+            if output == "REMOVED":
+                print(f"VPN: user {username} removed from server")
+            else:
+                print(f"VPN: remove result: {output}")
+
+    except Exception as e:
+        print(f"Error removing from VPN server: {e}")
+
+
 @app.get("/vpn", response_class=HTMLResponse)
-async def vpn_page(request: Request):
+async def vpn_page(request: Request, sent: str = None, error: str = None):
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    users, error = await get_vpn_users()
-    html = render_vpn_page(users, error)
+    users, db_error = await get_vpn_users()
+    # Объединяем ошибки
+    display_error = db_error
+    if error:
+        error_messages = {
+            "key_not_found": "Ключ не найден",
+            "no_bot_token": "BOT_TOKEN не настроен",
+            "send_failed": "Не удалось отправить сообщение",
+            "exception": "Ошибка при отправке"
+        }
+        display_error = error_messages.get(error, error)
+
+    success_message = "Ключ успешно отправлен пользователю!" if sent else None
+    html = render_vpn_page(users, display_error, success_message)
     return HTMLResponse(html)
 
 
@@ -930,7 +1005,65 @@ async def vpn_delete(request: Request, key_id: int):
     return RedirectResponse(url="/vpn", status_code=302)
 
 
-def render_vpn_page(users: list, error: str) -> str:
+@app.get("/vpn/send/{key_id}")
+async def vpn_send_key(request: Request, key_id: int):
+    """Отправить VPN ключ пользователю через Telegram бота"""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+
+    try:
+        async with aiosqlite.connect(JARVIS_DB_PATH) as db:
+            # Получаем информацию о ключе и пользователе
+            cursor = await db.execute("""
+                SELECT tk.subscription_url, tk.device_name, u.telegram_id
+                FROM tunnel_keys tk
+                JOIN users u ON tk.user_id = u.id
+                WHERE tk.id = ?
+            """, (key_id,))
+            row = await cursor.fetchone()
+
+            if not row or not row[0]:
+                return RedirectResponse(url="/vpn?error=key_not_found", status_code=302)
+
+            subscription_url = row[0]
+            device_name = row[1] or "VPN"
+            telegram_id = row[2]
+
+            # Отправляем сообщение через Telegram Bot API
+            import aiohttp
+            bot_token = os.getenv("BOT_TOKEN")
+            if not bot_token:
+                return RedirectResponse(url="/vpn?error=no_bot_token", status_code=302)
+
+            message = f"""🔑 <b>Ваш VPN ключ</b> ({device_name})
+
+Скопируйте ссылку ниже и вставьте в приложение:
+
+<code>{subscription_url}</code>
+
+📱 Инструкция по подключению: /vpn_help"""
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={
+                        "chat_id": telegram_id,
+                        "text": message,
+                        "parse_mode": "HTML"
+                    }
+                ) as resp:
+                    if resp.status == 200:
+                        return RedirectResponse(url="/vpn?sent=1", status_code=302)
+                    else:
+                        return RedirectResponse(url="/vpn?error=send_failed", status_code=302)
+
+    except Exception as e:
+        print(f"Error sending VPN key: {e}")
+        return RedirectResponse(url="/vpn?error=exception", status_code=302)
+
+
+def render_vpn_page(users: list, error: str, success: str = None) -> str:
     """Рендер страницы VPN пользователей"""
 
     # Статистика
@@ -994,6 +1127,16 @@ def render_vpn_page(users: list, error: str) -> str:
 
             toggle_text = "Откл" if is_active else "Вкл"
             key_id = u.get("id")
+            sub_url = u.get("subscription_url") or ""
+
+            # Кнопка просмотра ключа (если есть URL)
+            view_btn = ""
+            send_btn = ""
+            if sub_url:
+                # Кнопка просмотра - показывает модальное окно с ключом
+                view_btn = f'<a href="#" class="btn-small" onclick="showKey(\'{esc(sub_url)}\'); return false;" title="Показать ключ">👁</a>'
+                # Кнопка отправки ключа пользователю
+                send_btn = f'<a href="/vpn/send/{key_id}" class="btn-small btn-success" onclick="return confirm(\'Отправить ключ пользователю {esc(username)}?\')" title="Отправить ключ">📤</a>'
 
             users_rows += f"""
             <tr>
@@ -1005,11 +1148,16 @@ def render_vpn_page(users: list, error: str) -> str:
                 <td>{expire_text}</td>
                 <td>{created_text}</td>
                 <td>
+                    {view_btn}
+                    {send_btn}
                     <a href="/vpn/toggle/{key_id}" class="btn-small">{toggle_text}</a>
                     <a href="/vpn/delete/{key_id}" class="btn-small btn-danger" onclick="return confirm('Удалить VPN ключ?')">✕</a>
                 </td>
             </tr>
             """
+
+    # Подсчёт платных подписок
+    paid_users = sum(1 for u in users if u.get("plan") in ("basic", "standard", "pro")) if users else 0
 
     return f"""
 <!DOCTYPE html>
@@ -1017,16 +1165,16 @@ def render_vpn_page(users: list, error: str) -> str:
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VPN пользователи — Admin</title>
+    <title>Подписки — Admin</title>
     {COMMON_STYLES}
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🔐 VPN пользователи</h1>
+            <h1>💳 Подписки и VPN</h1>
             <nav>
                 <a href="/">Статистика</a>
-                <a href="/vpn" class="active">VPN</a>
+                <a href="/vpn" class="active">Подписки</a>
                 <a href="/promo">Промокоды</a>
                 <a href="/referrals">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -1034,48 +1182,133 @@ def render_vpn_page(users: list, error: str) -> str:
         </header>
 
         {"<div class='error'>Ошибка: " + str(error) + "</div>" if error else ""}
+        {"<div class='success'>✅ " + str(success) + "</div>" if success else ""}
 
         <div class="stats-row">
             <div class="stat-card">
                 <div class="stat-value">{total_users}</div>
-                <div class="stat-label">Всего ключей</div>
+                <div class="stat-label">Всего подписок</div>
             </div>
             <div class="stat-card green">
-                <div class="stat-value">{active_users}</div>
-                <div class="stat-label">Активных</div>
+                <div class="stat-value">{paid_users}</div>
+                <div class="stat-label">Платных</div>
             </div>
             <div class="stat-card blue">
                 <div class="stat-value">{trial_users}</div>
                 <div class="stat-label">На триале</div>
             </div>
+            <div class="stat-card" style="background: #e8f5e9;">
+                <div class="stat-value">{active_users}</div>
+                <div class="stat-label">VPN активен</div>
+            </div>
         </div>
 
         <div class="section">
-            <h2>VPN ключи (Xray)</h2>
+            <h2>Подписки на Jarvis</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>Статус</th>
+                        <th>VPN</th>
                         <th>Пользователь</th>
                         <th>Telegram ID</th>
                         <th>Устройство</th>
-                        <th>План</th>
-                        <th>Истекает</th>
+                        <th>План подписки</th>
+                        <th>Подписка до</th>
                         <th>Создан</th>
                         <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {users_rows if users_rows else "<tr><td colspan='8' class='empty'>Нет VPN ключей</td></tr>"}
+                    {users_rows if users_rows else "<tr><td colspan='8' class='empty'>Нет подписок</td></tr>"}
                 </tbody>
             </table>
         </div>
 
         <p class="footer">
-            Данные из БД (Xray Reality) •
+            Подписка на Jarvis включает: AI-ассистент, VPN, расширенные лимиты •
             Обновлено: {datetime.now().strftime("%d.%m.%Y %H:%M")}
         </p>
     </div>
+
+    <!-- Модальное окно для просмотра ключа -->
+    <div id="keyModal" class="modal" onclick="closeModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h3>🔑 VPN Ключ</h3>
+            <textarea id="keyText" readonly rows="3"></textarea>
+            <div class="modal-buttons">
+                <button onclick="copyKey()" class="btn">📋 Копировать</button>
+                <button onclick="closeModal()" class="btn btn-secondary">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .btn-success {{ color: #28a745 !important; border-color: #a3d9a5 !important; }}
+        .btn-success:hover {{ background: #f0fff4; }}
+        .btn-secondary {{ background: #6c757d; }}
+        .btn-secondary:hover {{ background: #5a6268; }}
+
+        .modal {{
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }}
+        .modal.show {{ display: flex; }}
+        .modal-content {{
+            background: #fff;
+            padding: 24px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }}
+        .modal-content h3 {{ margin-bottom: 16px; color: #333; }}
+        .modal-content textarea {{
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            resize: none;
+            background: #f8f9fa;
+        }}
+        .modal-buttons {{
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+            justify-content: flex-end;
+        }}
+    </style>
+
+    <script>
+        function showKey(key) {{
+            document.getElementById('keyText').value = key;
+            document.getElementById('keyModal').classList.add('show');
+        }}
+
+        function closeModal(event) {{
+            if (!event || event.target.classList.contains('modal')) {{
+                document.getElementById('keyModal').classList.remove('show');
+            }}
+        }}
+
+        function copyKey() {{
+            const textarea = document.getElementById('keyText');
+            textarea.select();
+            document.execCommand('copy');
+            alert('Ключ скопирован!');
+        }}
+
+        // Закрытие по Escape
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') closeModal();
+        }});
+    </script>
 </body>
 </html>
     """
@@ -1137,7 +1370,7 @@ async def get_jarvis_stats():
             data["summary"]["total_tokens"] = row[1]
             data["summary"]["total_cost"] = round(row[2] / 100, 2)
 
-            # Пользователи
+            # Пользователи с использованием функций
             cursor = await db.execute("""
                 SELECT
                     u.id,
@@ -1149,9 +1382,14 @@ async def get_jarvis_stats():
                     (SELECT MAX(created_at) FROM conversations WHERE user_id = u.id AND role = 'user') as last_activity,
                     (SELECT COUNT(*) FROM api_usage_logs WHERE user_id = u.id) as requests,
                     (SELECT COALESCE(SUM(total_tokens), 0) FROM api_usage_logs WHERE user_id = u.id) as tokens,
-                    (SELECT COALESCE(SUM(estimated_cost_cents), 0) FROM api_usage_logs WHERE user_id = u.id) as cost_cents
+                    (SELECT COALESCE(SUM(estimated_cost_cents), 0) FROM api_usage_logs WHERE user_id = u.id) as cost_cents,
+                    (SELECT COUNT(*) FROM conversations WHERE user_id = u.id AND role = 'user') as messages,
+                    (SELECT COUNT(*) FROM tasks WHERE user_id = u.id) as tasks,
+                    (SELECT COUNT(*) FROM diary_entries WHERE user_id = u.id) as diary,
+                    (SELECT COUNT(*) FROM reminders WHERE user_id = u.id) as reminders,
+                    (SELECT COUNT(*) FROM habits WHERE user_id = u.id AND is_active = 1) as habits
                 FROM users u
-                ORDER BY requests DESC
+                ORDER BY messages DESC
             """)
             rows = await cursor.fetchall()
             for row in rows:
@@ -1174,6 +1412,11 @@ async def get_jarvis_stats():
                     "requests": row[7],
                     "tokens": row[8],
                     "cost": round(row[9] / 100, 2) if row[9] else 0,
+                    "messages": row[10] or 0,
+                    "tasks": row[11] or 0,
+                    "diary": row[12] or 0,
+                    "reminders": row[13] or 0,
+                    "habits": row[14] or 0,
                 })
 
             # API по типам
@@ -1216,6 +1459,34 @@ async def get_jarvis_stats():
             # VPN пользователи
             cursor = await db.execute("SELECT COUNT(*) FROM tunnel_keys WHERE is_active = 1")
             data["vpn_users"] = (await cursor.fetchone())[0]
+
+            # Статистика подписок
+            cursor = await db.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN plan IN ('basic', 'standard', 'pro') AND status = 'active' THEN 1 ELSE 0 END) as paid,
+                    SUM(CASE WHEN plan = 'free_trial' AND status = 'active' THEN 1 ELSE 0 END) as trial,
+                    SUM(CASE WHEN expires_at < datetime('now') THEN 1 ELSE 0 END) as expired
+                FROM subscriptions
+            """)
+            row = await cursor.fetchone()
+            data["subscriptions"] = {
+                "total": row[0] or 0,
+                "paid": row[1] or 0,
+                "trial": row[2] or 0,
+                "expired": row[3] or 0,
+            }
+
+            # Подписки по планам
+            cursor = await db.execute("""
+                SELECT plan, COUNT(*) as count
+                FROM subscriptions
+                WHERE status = 'active' AND (expires_at IS NULL OR expires_at > datetime('now'))
+                GROUP BY plan
+                ORDER BY count DESC
+            """)
+            rows = await cursor.fetchall()
+            data["subscriptions_by_plan"] = [{"plan": row[0], "count": row[1]} for row in rows]
 
             # Функции
             cursor = await db.execute("""
@@ -1269,19 +1540,33 @@ def render_jarvis_dashboard(data: dict) -> str:
     total_cost = sum(u['cost'] for u in users)
     total_calendars = sum(1 for u in users if u['calendar'] == "✅")
 
-    # Таблица пользователей
+    # Таблица пользователей с использованием функций
     users_rows = ""
+    total_messages = 0
+    total_tasks = 0
+    total_diary = 0
+    total_reminders = 0
+    total_habits = 0
+
     for i, u in enumerate(users, 1):
+        total_messages += u['messages']
+        total_tasks += u['tasks']
+        total_diary += u['diary']
+        total_reminders += u['reminders']
+        total_habits += u['habits']
+
         users_rows += f"""
         <tr>
             <td>{i}</td>
             <td>{u['username']}</td>
             <td><code>{u['telegram_id']}</code></td>
             <td>{u['calendar']}</td>
-            <td>{u['created_at']}</td>
-            <td>{u['last_activity']}</td>
+            <td>{u['messages']:,}</td>
+            <td>{u['tasks']}</td>
+            <td>{u['diary']}</td>
+            <td>{u['reminders']}</td>
+            <td>{u['habits']}</td>
             <td>{u['requests']:,}</td>
-            <td>{u['tokens']:,}</td>
             <td>${u['cost']:.2f}</td>
         </tr>
         """
@@ -1289,11 +1574,14 @@ def render_jarvis_dashboard(data: dict) -> str:
     # Строка "Итого"
     users_rows += f"""
         <tr style="background: #f8f9fa; font-weight: 600; border-top: 2px solid #dee2e6;">
-            <td colspan="3">Итого: {len(users)} пользователей</td>
+            <td colspan="3">Итого: {len(users)} польз.</td>
             <td>{total_calendars} ✅</td>
-            <td colspan="2"></td>
+            <td>{total_messages:,}</td>
+            <td>{total_tasks}</td>
+            <td>{total_diary}</td>
+            <td>{total_reminders}</td>
+            <td>{total_habits}</td>
             <td>{total_requests:,}</td>
-            <td>{total_tokens:,}</td>
             <td>${total_cost:.2f}</td>
         </tr>
         """
@@ -1312,58 +1600,45 @@ def render_jarvis_dashboard(data: dict) -> str:
         </tr>
         """
 
-    # Таблица функций
+    # Таблица VPN и подписок
     features_rows = ""
-    for f in data.get("features", []):
-        if f['name'] == 'Напоминания':
-            continue
-        features_rows += f"""
-        <tr><td>{f['name']}</td><td>{f['count']:,}</td></tr>
-        """
 
     # VPN пользователи
     vpn_users = data.get("vpn_users", 0)
     features_rows += f"""
-        <tr><td>🔐 VPN пользователей</td><td>{vpn_users:,}</td></tr>
+        <tr><td>🔐 VPN ключей активно</td><td>{vpn_users:,}</td></tr>
         """
 
-    # Напоминания с детализацией
-    reminders = data.get("reminders", {})
-    reminders_total = reminders.get("total", 0)
-    reminders_sent = reminders.get("sent", 0)
-    reminders_pending = reminders.get("pending", 0)
+    # Подписки с детализацией
+    subs = data.get("subscriptions", {})
+    subs_total = subs.get("total", 0)
+    subs_paid = subs.get("paid", 0)
+    subs_trial = subs.get("trial", 0)
+    subs_expired = subs.get("expired", 0)
+    subs_by_plan = data.get("subscriptions_by_plan", [])
+
+    subs_items = ""
+    for sp in subs_by_plan:
+        plan_names = {"free_trial": "Триал", "basic": "Basic", "standard": "Standard", "pro": "Pro"}
+        plan_name = plan_names.get(sp["plan"], sp["plan"])
+        subs_items += f'<div class="detail-item"><span>{plan_name}</span><span>{sp["count"]}</span></div>'
 
     features_rows += f"""
-        <tr class="expandable-row" onclick="toggleReminders()">
-            <td>Напоминания <span class="toggle-icon" id="reminders-toggle">▼</span></td>
-            <td>{reminders_total:,}</td>
+        <tr class="expandable-row" onclick="toggleSubs()">
+            <td>💳 Подписки <span class="toggle-icon" id="subs-toggle">▼</span></td>
+            <td>{subs_paid + subs_trial:,}</td>
         </tr>
-        <tr id="reminders-detail" style="display: none;">
+        <tr id="subs-detail" style="display: none;">
             <td colspan="2" class="detail-cell">
-                <div class="detail-item"><span>✅ Отправлено</span><span>{reminders_sent}</span></div>
-                <div class="detail-item"><span>⏳ Ожидает</span><span>{reminders_pending}</span></div>
+                <div class="detail-item"><span>💰 Платных</span><span>{subs_paid}</span></div>
+                <div class="detail-item"><span>🎁 Триал</span><span>{subs_trial}</span></div>
+                <div class="detail-item"><span>⏰ Истекших</span><span>{subs_expired}</span></div>
+                <hr style="margin: 8px 0; border: none; border-top: 1px solid #eee;">
+                {subs_items if subs_items else '<div class="detail-item empty">Нет данных</div>'}
             </td>
         </tr>
         """
 
-    # Привычки с детализацией
-    habits_detail = data.get("habits_detail", [])
-    habits_total = data.get("habits_total", 0)
-    habits_items = ""
-    for h in habits_detail:
-        habits_items += f'<div class="detail-item"><span>{h["emoji"]} {h["name"]}</span><span>{h["count"]}</span></div>'
-
-    features_rows += f"""
-        <tr class="expandable-row" onclick="toggleHabits()">
-            <td>Привычки <span class="toggle-icon" id="habits-toggle">▼</span></td>
-            <td>{habits_total:,}</td>
-        </tr>
-        <tr id="habits-detail" style="display: none;">
-            <td colspan="2" class="detail-cell">
-                {habits_items if habits_items else '<div class="detail-item empty">Нет данных</div>'}
-            </td>
-        </tr>
-        """
 
 
     return f"""
@@ -1381,7 +1656,7 @@ def render_jarvis_dashboard(data: dict) -> str:
             <h1>🤖 Jarvis Bot</h1>
             <nav>
                 <a href="/" class="active">Статистика</a>
-                <a href="/vpn">VPN</a>
+                <a href="/vpn">Подписки</a>
                 <a href="/promo">Промокоды</a>
                 <a href="/referrals">Рефералы</a>
                 <a href="/logout">Выйти</a>
@@ -1391,19 +1666,22 @@ def render_jarvis_dashboard(data: dict) -> str:
         {"<div class='error'>Ошибка: " + str(error) + "</div>" if error else ""}
 
         <div class="section">
-            <h2>Пользователи</h2>
+            <h2>Пользователи и использование функций</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>#</th><th>Username</th><th>Telegram ID</th><th>Календарь</th>
-                        <th>Регистрация</th><th>Последняя активность</th>
-                        <th>Запросы</th><th>Токены</th><th>Стоимость</th>
+                        <th>#</th><th>Username</th><th>Telegram ID</th><th>📅</th>
+                        <th>💬</th><th>📋</th><th>📓</th><th>🔔</th><th>✅</th>
+                        <th>AI</th><th>$</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {users_rows if users_rows else "<tr><td colspan='9' class='empty'>Нет данных</td></tr>"}
+                    {users_rows if users_rows else "<tr><td colspan='11' class='empty'>Нет данных</td></tr>"}
                 </tbody>
             </table>
+            <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                📅 Календарь • 💬 Сообщения • 📋 Задачи • 📓 Дневник • 🔔 Напоминания • ✅ Привычки • AI Запросы • $ Стоимость
+            </p>
         </div>
 
         <div class="grid-2">
@@ -1420,9 +1698,9 @@ def render_jarvis_dashboard(data: dict) -> str:
             </div>
 
             <div class="section">
-                <h2>Использование функций</h2>
+                <h2>Подписки и VPN</h2>
                 <table>
-                    <thead><tr><th>Функция</th><th>Использований</th></tr></thead>
+                    <thead><tr><th>Метрика</th><th>Значение</th></tr></thead>
                     <tbody>
                         {features_rows if features_rows else "<tr><td colspan='2' class='empty'>Нет данных</td></tr>"}
                     </tbody>
@@ -1434,20 +1712,9 @@ def render_jarvis_dashboard(data: dict) -> str:
     </div>
 
     <script>
-        function toggleHabits() {{
-            const detail = document.getElementById('habits-detail');
-            const toggle = document.getElementById('habits-toggle');
-            if (detail.style.display === 'none') {{
-                detail.style.display = 'table-row';
-                toggle.textContent = '▲';
-            }} else {{
-                detail.style.display = 'none';
-                toggle.textContent = '▼';
-            }}
-        }}
-        function toggleReminders() {{
-            const detail = document.getElementById('reminders-detail');
-            const toggle = document.getElementById('reminders-toggle');
+        function toggleSubs() {{
+            const detail = document.getElementById('subs-detail');
+            const toggle = document.getElementById('subs-toggle');
             if (detail.style.display === 'none') {{
                 detail.style.display = 'table-row';
                 toggle.textContent = '▲';
@@ -1555,6 +1822,14 @@ COMMON_STYLES = """
         background: #fff5f5;
         border: 1px solid #fed7d7;
         color: #dc3545;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+    .success {
+        background: #f0fff4;
+        border: 1px solid #c6f6d5;
+        color: #28a745;
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 20px;

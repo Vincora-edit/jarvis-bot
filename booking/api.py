@@ -282,6 +282,16 @@ async def cancel_booking(request: Request, token: str):
 
 # === УВЕДОМЛЕНИЯ ===
 
+def _escape_md(text: str) -> str:
+    """Экранировать спецсимволы Markdown"""
+    if not text:
+        return ""
+    # Экранируем символы, которые ломают Markdown парсер
+    for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+        text = text.replace(char, '\\' + char)
+    return text
+
+
 async def notify_booking_owner(telegram_id: int, booking, link):
     """Отправить уведомление о новом бронировании"""
     try:
@@ -293,19 +303,24 @@ async def notify_booking_owner(telegram_id: int, booking, link):
         else:
             start_local = start_local.astimezone(tz)
 
+        # Экранируем пользовательский ввод
+        guest_name = _escape_md(booking.guest_name)
+        guest_email = _escape_md(booking.guest_email)
+        title = _escape_md(link.title)
+
         text = (
-            f"📅 **Новое бронирование!**\n\n"
-            f"**{link.title}**\n"
-            f"Гость: {booking.guest_name}\n"
-            f"Email: {booking.guest_email}\n"
+            f"📅 *Новое бронирование\\!*\n\n"
+            f"*{title}*\n"
+            f"Гость: {guest_name}\n"
+            f"Email: {guest_email}\n"
             f"Дата: {start_local.strftime('%d.%m.%Y')}\n"
-            f"Время: {start_local.strftime('%H:%M')} ({link.duration_minutes} мин)"
+            f"Время: {start_local.strftime('%H:%M')} \\({link.duration_minutes} мин\\)"
         )
 
         if booking.guest_notes:
-            text += f"\n\nКомментарий: {booking.guest_notes}"
+            text += f"\n\nКомментарий: {_escape_md(booking.guest_notes)}"
 
-        await bot.send_message(telegram_id, text, parse_mode="Markdown")
+        await bot.send_message(telegram_id, text, parse_mode="MarkdownV2")
         logger.info(f"Уведомление о бронировании отправлено user {telegram_id}")
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления: {e}")
@@ -322,13 +337,15 @@ async def notify_booking_cancelled(telegram_id: int, booking):
         else:
             start_local = start_local.astimezone(tz)
 
+        guest_name = _escape_md(booking.guest_name)
+
         text = (
-            f"❌ **Бронирование отменено**\n\n"
-            f"Гость {booking.guest_name} отменил встречу\n"
+            f"❌ *Бронирование отменено*\n\n"
+            f"Гость {guest_name} отменил встречу\n"
             f"Дата: {start_local.strftime('%d.%m.%Y %H:%M')}"
         )
 
-        await bot.send_message(telegram_id, text, parse_mode="Markdown")
+        await bot.send_message(telegram_id, text, parse_mode="MarkdownV2")
         logger.info(f"Уведомление об отмене отправлено user {telegram_id}")
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления об отмене: {e}")
