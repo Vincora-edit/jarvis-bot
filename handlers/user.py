@@ -3237,10 +3237,11 @@ async def handle_update_task(action: dict, telegram_id: int = None) -> str:
             return f"🔍 Не нашёл событие «{original_title}»"
 
         event_title = event.get("summary", original_title)
+        event_calendar_id = event.get("_calendar_id", "primary")  # Календарь события
 
         # Только меняем напоминания (без изменения времени)
         if new_reminders and not new_time and not new_duration:
-            cal.update_event_reminders(event["id"], new_reminders)
+            cal.update_event_reminders(event["id"], new_reminders, calendar_id=event_calendar_id)
             reminder_text = _format_reminder_text(new_reminders)
             return f"🔔 **{event_title}**\n · Напоминание: {reminder_text}"
 
@@ -3284,11 +3285,11 @@ async def handle_update_task(action: dict, telegram_id: int = None) -> str:
         new_end = new_datetime + timedelta(minutes=duration)
 
         # Проверяем конфликты (исключая само событие)
-        conflicts = cal.check_conflicts(new_datetime, new_end, exclude_event_id=event["id"])
+        conflicts = cal.check_conflicts(new_datetime, new_end, calendar_id=event_calendar_id, exclude_event_id=event["id"])
         conflict_warning = cal.format_conflict_warning(conflicts)
 
-        # Обновляем событие
-        cal.update_event_time(event["id"], new_datetime, duration_minutes=duration)
+        # Обновляем событие (передаём calendar_id!)
+        cal.update_event_time(event["id"], new_datetime, duration_minutes=duration, calendar_id=event_calendar_id)
 
         time_formatted = new_datetime.strftime("%H:%M")
         end_formatted = new_end.strftime("%H:%M")
@@ -3405,11 +3406,12 @@ async def handle_rename_task(action: dict, telegram_id: int = None) -> str:
             return f"🔍 Не нашёл событие «{original_title}»"
 
         old_title = event.get("summary", original_title)
+        event_calendar_id = event.get("_calendar_id", "primary")  # Календарь события
         old_emoji = cal.get_emoji_for_title(old_title)
         new_emoji = cal.get_emoji_for_title(new_title)
 
         # Переименовываем
-        cal.rename_event(event["id"], new_title)
+        cal.rename_event(event["id"], new_title, calendar_id=event_calendar_id)
 
         return f"✏️ {old_emoji} [{old_title}] → {new_emoji} [{new_title}]"
 

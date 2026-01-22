@@ -819,12 +819,18 @@ class CalendarService:
         calendar_id: str = "primary",
     ) -> dict:
         """Обновить время события"""
+        from googleapiclient.errors import HttpError
 
         # Получаем текущее событие
-        event = self.service.events().get(
-            calendarId=calendar_id,
-            eventId=event_id
-        ).execute()
+        try:
+            event = self.service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+        except HttpError as e:
+            if e.resp.status == 404:
+                raise ValueError("Событие не найдено в календаре. Возможно, оно было удалено.")
+            raise
 
         # Вычисляем длительность если не указана
         if duration_minutes is None:
