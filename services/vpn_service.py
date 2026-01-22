@@ -101,12 +101,20 @@ class VPNService:
     # === ПОДПИСКИ ===
 
     async def get_user_subscription(self, user_id: int) -> Optional[Subscription]:
-        """Получить активную подписку пользователя (последнюю по дате истечения)"""
+        """
+        Получить лучшую активную подписку пользователя.
+        Приоритет: бессрочные (expires_at IS NULL) > по дате истечения DESC.
+        """
         result = await self.session.execute(
             select(Subscription).where(
                 Subscription.user_id == user_id,
                 Subscription.status == "active"
-            ).order_by(Subscription.expires_at.desc()).limit(1)
+            ).order_by(
+                # Бессрочные подписки (NULL) первыми
+                Subscription.expires_at.is_(None).desc(),
+                # Затем по дате истечения (позже = лучше)
+                Subscription.expires_at.desc()
+            ).limit(1)
         )
         return result.scalar_one_or_none()
 
