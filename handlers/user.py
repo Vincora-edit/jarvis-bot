@@ -1907,6 +1907,10 @@ async def habit_interval_callback(call: types.CallbackQuery, state: FSMContext):
         memory = MemoryService(session)
         user, _ = await memory.get_or_create_user(call.from_user.id)
 
+        # Используем режим пользователя
+        morning_time = user.morning_time or "08:00"
+        evening_time = user.evening_time or "22:00"
+
         habit = await habit_service.create_habit(
             user_id=user.id,
             name=preset["name"],
@@ -1926,7 +1930,7 @@ async def habit_interval_callback(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_text(
         f"✅ Привычка добавлена!\n\n"
         f"{preset['emoji']} **{preset['name']}**\n"
-        f"📅 Напоминания {interval_text} (08:00–21:00)",
+        f"📅 Напоминания {interval_text} ({morning_time}–{evening_time})",
         parse_mode="Markdown"
     )
     await state.clear()

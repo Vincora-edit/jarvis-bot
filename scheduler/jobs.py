@@ -668,33 +668,38 @@ async def personalized_habit_reminder_job(bot, get_session):
 
                     # === ПРИВЫЧКИ С ИНТЕРВАЛОМ (например, вода) ===
                     if habit.reminder_interval_minutes:
-                        # Проверяем, в рабочем ли времени (08:00-21:00)
+                        # Получаем пользователя для проверки его режима
+                        user_result = await session.execute(
+                            select(User).where(User.id == habit.user_id)
+                        )
+                        user = user_result.scalar_one_or_none()
+                        if not user:
+                            continue
+
+                        # Используем режим пользователя
+                        morning_time = user.morning_time or "08:00"
+                        evening_time = user.evening_time or "22:00"
+                        start_hour = int(morning_time.split(":")[0])
+                        end_hour = int(evening_time.split(":")[0])
+
+                        # Проверяем, в рабочем ли времени пользователя
                         current_hour = now.hour
                         current_minute = now.minute
-                        if current_hour < 8 or current_hour >= 21:
-                            continue  # Вне рабочего времени
+                        if current_hour < start_hour or current_hour >= end_hour:
+                            continue  # Вне режима пользователя
 
                         # Проверяем, совпадает ли текущая минута с интервалом
-                        # Начинаем с 08:00, интервал в минутах
-                        minutes_since_8am = (current_hour - 8) * 60 + current_minute
+                        minutes_since_start = (current_hour - start_hour) * 60 + current_minute
                         interval = habit.reminder_interval_minutes
 
                         # Проверяем, попадает ли текущее время на интервал
-                        if minutes_since_8am % interval != 0:
+                        if minutes_since_start % interval != 0:
                             continue
 
                         # Уникальный ключ для интервальной привычки
                         reminder_key = f"{habit.id}_interval_{current_time}_{now.date()}"
 
                         if reminder_key in _sent_habit_reminders:
-                            continue
-
-                        # Получаем пользователя
-                        user_result = await session.execute(
-                            select(User).where(User.id == habit.user_id)
-                        )
-                        user = user_result.scalar_one_or_none()
-                        if not user:
                             continue
 
                         # Формируем сообщение для воды
