@@ -62,20 +62,11 @@ EVENT_CATEGORIES = {
     }
 }
 
-# Контекстные сообщения для напоминаний
+# Контекстные сообщения для напоминаний (без случайности — единый формат)
 REMINDER_TEMPLATES = {
-    "long": [  # Больше 60 минут
-        "Через {time}: {event}",
-        "{event} через {time}",
-    ],
-    "medium": [  # 15-60 минут
-        "{time} до: {event}",
-        "Через {time}: {event}",
-    ],
-    "short": [  # Меньше 15 минут
-        "{time}: {event}",
-        "Скоро: {event}",
-    ],
+    "long": "Через {time}: {event}",      # Больше 60 минут
+    "medium": "Через {time}: {event}",    # 15-60 минут
+    "short": "{time}: {event}",           # Меньше 15 минут
 }
 
 
@@ -134,21 +125,18 @@ class SmartReminderService:
         include_prep: bool = True
     ) -> str:
         """Сгенерировать сообщение напоминания"""
-        import random
-
         category = self.detect_category(title)
         config = EVENT_CATEGORIES[category]
         emoji = config["emoji"]
 
-        # Выбираем шаблон в зависимости от времени
+        # Выбираем шаблон в зависимости от времени (без случайности)
         if minutes_until > 60:
-            templates = REMINDER_TEMPLATES["long"]
+            template = REMINDER_TEMPLATES["long"]
         elif minutes_until > 15:
-            templates = REMINDER_TEMPLATES["medium"]
+            template = REMINDER_TEMPLATES["medium"]
         else:
-            templates = REMINDER_TEMPLATES["short"]
+            template = REMINDER_TEMPLATES["short"]
 
-        template = random.choice(templates)
         time_str = self.format_time_until(minutes_until)
 
         message = template.format(

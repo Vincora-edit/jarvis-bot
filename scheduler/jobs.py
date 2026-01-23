@@ -438,6 +438,10 @@ async def calendar_reminder_job(bot, get_session):
                     cal = await get_user_calendar(user)
                     events = get_cached_events(user.telegram_id, cal, "today")
 
+                    # Собираем все напоминания для этого пользователя
+                    # Группируем по remind_bucket чтобы объединить события в одно сообщение
+                    pending_reminders = {}  # {remind_bucket: [(title, start_local, event_id), ...]}
+
                     for event in events:
                         start = event.get("start", {})
                         if "dateTime" not in start:
@@ -473,12 +477,39 @@ async def calendar_reminder_job(bot, get_session):
                         if reminder_key in _sent_reminders and remind_bucket in _sent_reminders.get(reminder_key, {}):
                             continue  # Уже отправляли
 
-                        message = reminder_service.generate_reminder(
-                            title=title,
-                            event_time=start_local,
-                            minutes_until=remind_bucket,  # Используем ровное значение (60, 15)
-                            include_prep=True
-                        )
+                        # Добавляем в группу по remind_bucket
+                        if remind_bucket not in pending_reminders:
+                            pending_reminders[remind_bucket] = []
+                        pending_reminders[remind_bucket].append((title, start_local, event_id))
+
+                    # Теперь отправляем сгруппированные напоминания
+                    for remind_bucket, events_list in pending_reminders.items():
+                        if not events_list:
+                            continue
+
+                        # Формируем сообщение
+                        if len(events_list) == 1:
+                            # Одно событие — стандартный формат
+                            title, start_local, event_id = events_list[0]
+                            message = reminder_service.generate_reminder(
+                                title=title,
+                                event_time=start_local,
+                                minutes_until=remind_bucket,
+                                include_prep=True
+                            )
+                            titles_for_log = title
+                        else:
+                            # Несколько событий — объединяем в одно сообщение
+                            time_str = reminder_service.format_time_until(remind_bucket)
+                            lines = [f"Через {time_str}:"]
+                            for title, start_local, _ in events_list:
+                                category = reminder_service.detect_category(title)
+                                from services.smart_reminder_service import EVENT_CATEGORIES
+                                emoji = EVENT_CATEGORIES[category]["emoji"]
+                                event_time_str = start_local.strftime("%H:%M")
+                                lines.append(f"• {emoji} {title} ({event_time_str})")
+                            message = "\n".join(lines)
+                            titles_for_log = ", ".join([t for t, _, _ in events_list])
 
                         # Проверяем режим работы пользователя
                         is_active, _ = is_within_working_hours(user, now)
@@ -487,25 +518,27 @@ async def calendar_reminder_job(bot, get_session):
                             # Рабочее время — отправляем сразу
                             try:
                                 await bot.send_message(user.telegram_id, message)
-                                # Сохраняем напоминание в историю для контекста (чтобы "удали эту задачу" работало)
+                                # Сохраняем напоминание в историю для контекста
                                 memory = MemoryService(session)
                                 await memory.save_message(
                                     user.id,
                                     "assistant",
-                                    f"[Напоминание о событии: {title}] {message}",
+                                    f"[Напоминание о событиях: {titles_for_log}] {message}",
                                     "reminder"
                                 )
                             except Exception as e:
                                 logger.error(f"❌ Ошибка отправки: {e}")
-                            logger.info(f"Напоминание ({remind_bucket} мин) для {user.telegram_id}: {title}")
+                            logger.info(f"Напоминание ({remind_bucket} мин) для {user.telegram_id}: {titles_for_log}")
                         else:
                             # Вне рабочего времени — откладываем
                             defer_reminder(user.telegram_id, "calendar", message)
 
-                        # Запоминаем, что обработали
-                        if reminder_key not in _sent_reminders:
-                            _sent_reminders[reminder_key] = {}
-                        _sent_reminders[reminder_key][remind_bucket] = current_ts
+                        # Запоминаем, что обработали все события в этой группе
+                        for _, _, event_id in events_list:
+                            reminder_key = f"{user.telegram_id}_{event_id}"
+                            if reminder_key not in _sent_reminders:
+                                _sent_reminders[reminder_key] = {}
+                            _sent_reminders[reminder_key][remind_bucket] = current_ts
 
                 except Exception as e:
                     logger.error(f"❌ Ошибка проверки календаря для {user.telegram_id}: {e}")
