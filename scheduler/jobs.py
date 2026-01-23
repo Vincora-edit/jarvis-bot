@@ -399,8 +399,76 @@ async def weekly_plan_job(bot, get_session):
                 logger.error(f"❌ Ошибка недельного отчёта {user.telegram_id}: {e}")
 
 
+async def scan_calendars_for_reminders_job(bot, get_session):
+    """
+    Сканирование календарей и планирование точных напоминаний.
+    Запускается каждый час для обнаружения новых событий (созданных не через бота).
+    """
+    from database import async_session
+    from database.models import User
+    from sqlalchemy import select
+    from services.exact_reminder_service import ExactReminderService
+
+    logger.info("🔍 Сканирование календарей для планирования напоминаний...")
+
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+
+            scheduled_count = 0
+
+            for user in users:
+                try:
+                    # Только пользователи с подключённым календарём
+                    if not user.calendar_connected or not user.google_credentials:
+                        continue
+
+                    cal = await get_user_calendar(user)
+                    # Получаем события на сегодня и завтра
+                    events_today = get_cached_events(user.telegram_id, cal, "today")
+                    events_tomorrow = get_cached_events(user.telegram_id, cal, "tomorrow")
+                    all_events = events_today + events_tomorrow
+
+                    exact_service = ExactReminderService(session)
+
+                    for event in all_events:
+                        start = event.get("start", {})
+                        if "dateTime" not in start:
+                            continue
+
+                        event_id = event.get("id", "")
+                        if not event_id:
+                            continue
+
+                        start_dt = datetime.fromisoformat(start["dateTime"].replace("Z", "+00:00"))
+                        start_local = start_dt.astimezone(pytz.timezone(config.TIMEZONE))
+                        title = event.get("summary", "Событие")
+
+                        # Планируем напоминания (сервис сам проверит дубликаты)
+                        created = await exact_service.schedule_reminders_for_event(
+                            user_id=user.id,
+                            telegram_id=user.telegram_id,
+                            event_id=event_id,
+                            event_title=title,
+                            event_time=start_local,
+                        )
+                        scheduled_count += len(created)
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка сканирования календаря для {user.telegram_id}: {e}")
+
+            if scheduled_count > 0:
+                logger.info(f"📅 Запланировано {scheduled_count} новых напоминаний")
+            else:
+                logger.debug("📅 Новых напоминаний не запланировано")
+
+    except Exception as e:
+        logger.error(f"❌ Общая ошибка сканирования календарей: {e}")
+
+
 async def calendar_reminder_job(bot, get_session):
-    """Проверка календаря и умные напоминания для каждого пользователя"""
+    """Проверка календаря и умные напоминания для каждого пользователя (fallback)"""
     global _sent_reminders
 
     from database import async_session
@@ -1025,7 +1093,31 @@ async def user_reminders_job(bot, get_session):
 def setup_scheduler(bot, get_session):
     """Настройка всех запланированных задач"""
 
-    # Проверка календаря каждую минуту для напоминаний
+    # Инициализация сервиса точных напоминаний
+    from services.exact_reminder_service import init_exact_reminders
+    init_exact_reminders(scheduler, bot)
+
+    # Сканирование календарей и планирование точных напоминаний — каждый час
+    scheduler.add_job(
+        scan_calendars_for_reminders_job,
+        CronTrigger(minute=0),  # Каждый час в :00
+        args=[bot, get_session],
+        id="scan_calendars_reminders",
+        replace_existing=True,
+    )
+
+    # Также запускаем сканирование через 2 минуты после старта бота
+    from datetime import datetime, timedelta
+    scheduler.add_job(
+        scan_calendars_for_reminders_job,
+        trigger="date",
+        run_date=datetime.now() + timedelta(minutes=2),
+        args=[bot, get_session],
+        id="initial_calendar_scan",
+        replace_existing=True,
+    )
+
+    # Fallback: старая проверка календаря каждую минуту (для событий без точных напоминаний)
     scheduler.add_job(
         calendar_reminder_job,
         CronTrigger(minute="*"),  # Каждую минуту

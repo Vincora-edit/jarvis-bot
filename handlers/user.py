@@ -3117,7 +3117,7 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
 
             # Создаём событие (обычное или повторяющееся)
             if recurrence:
-                cal.create_recurring_event(
+                created_event = cal.create_recurring_event(
                     title=title,
                     start_datetime=event_datetime,
                     duration_minutes=duration,
@@ -3126,7 +3126,7 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
                     location=location,
                 )
             else:
-                cal.create_event(
+                created_event = cal.create_event(
                     title=title,
                     start_datetime=event_datetime,
                     duration_minutes=duration,
@@ -3134,9 +3134,13 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
                     location=location,
                 )
 
-            # Сохраняем задачу в БД для статистики
+            # Планируем точные напоминания
+            event_id = created_event.get("id") if created_event else None
+
+            # Сохраняем задачу в БД и планируем точные напоминания
             async with async_session() as session:
                 from database.models import Task
+                from services.exact_reminder_service import ExactReminderService
                 memory = MemoryService(session)
                 user, _ = await memory.get_or_create_user(telegram_id)
                 task = Task(
@@ -3146,6 +3150,18 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
                     status="pending"
                 )
                 session.add(task)
+
+                # Планируем точные напоминания (если есть event_id)
+                if event_id and not recurrence:  # Для повторяющихся событий пока не поддерживаем
+                    exact_service = ExactReminderService(session)
+                    await exact_service.schedule_reminders_for_event(
+                        user_id=user.id,
+                        telegram_id=telegram_id,
+                        event_id=event_id,
+                        event_title=title,
+                        event_time=event_datetime,
+                    )
+
                 await session.commit()
 
             # Форматируем ответ

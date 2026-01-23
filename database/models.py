@@ -3,7 +3,7 @@
 """
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -489,3 +489,29 @@ class DailyUsage(Base):
     calendar_reminders: Mapped[int] = mapped_column(Integer, default=0)  # Напоминания календаря
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ScheduledReminder(Base):
+    """Запланированные напоминания о событиях календаря (для точной отправки)"""
+    __tablename__ = "scheduled_reminders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+
+    # Идентификация события
+    event_id: Mapped[str] = mapped_column(String(255), index=True)  # Google Calendar event ID
+    event_title: Mapped[str] = mapped_column(String(500))
+    event_time: Mapped[datetime] = mapped_column(DateTime)  # Время события
+
+    # Параметры напоминания
+    remind_at: Mapped[datetime] = mapped_column(DateTime, index=True)  # Когда отправить
+    minutes_before: Mapped[int] = mapped_column(Integer)  # За сколько минут (60, 15)
+
+    # Статус
+    is_sent: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # APScheduler job ID (для отмены при изменении события)
+    job_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
