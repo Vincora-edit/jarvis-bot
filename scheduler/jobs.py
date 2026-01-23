@@ -1117,10 +1117,10 @@ def setup_scheduler(bot, get_session):
         replace_existing=True,
     )
 
-    # Fallback: старая проверка календаря каждую минуту (для событий без точных напоминаний)
+    # Fallback: проверка календаря раз в 15 минут (подстраховка)
     scheduler.add_job(
         calendar_reminder_job,
-        CronTrigger(minute="*"),  # Каждую минуту
+        CronTrigger(minute="0,15,30,45"),  # Каждые 15 минут
         args=[bot, get_session],
         id="calendar_reminder",
         replace_existing=True,
