@@ -236,20 +236,23 @@ def habit_time_keyboard():
     ])
 
 
+def habit_interval_keyboard():
+    """Клавиатура выбора интервала напоминаний (для воды)"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="Каждые 30 мин", callback_data="hinterval_30"),
+            InlineKeyboardButton(text="Каждый час", callback_data="hinterval_60"),
+        ],
+        [
+            InlineKeyboardButton(text="Каждые 2 часа", callback_data="hinterval_120"),
+            InlineKeyboardButton(text="Каждые 3 часа", callback_data="hinterval_180"),
+        ],
+    ])
+
+
 def habit_count_keyboard(habit_type: str):
-    """Клавиатура выбора количества (для воды, витаминов)"""
-    if habit_type == "water":
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="6 стаканов", callback_data="hcount_6"),
-                InlineKeyboardButton(text="8 стаканов", callback_data="hcount_8"),
-            ],
-            [
-                InlineKeyboardButton(text="10 стаканов", callback_data="hcount_10"),
-                InlineKeyboardButton(text="12 стаканов", callback_data="hcount_12"),
-            ],
-        ])
-    elif habit_type == "vitamins":
+    """Клавиатура выбора количества (для витаминов)"""
+    if habit_type == "vitamins":
         return InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="1 раз (утром)", callback_data="hcount_1"),

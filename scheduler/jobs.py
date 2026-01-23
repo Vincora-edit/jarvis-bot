@@ -666,6 +666,69 @@ async def personalized_habit_reminder_job(bot, get_session):
                     if current_day not in allowed_days:
                         continue
 
+                    # === ПРИВЫЧКИ С ИНТЕРВАЛОМ (например, вода) ===
+                    if habit.reminder_interval_minutes:
+                        # Проверяем, в рабочем ли времени (08:00-21:00)
+                        current_hour = now.hour
+                        current_minute = now.minute
+                        if current_hour < 8 or current_hour >= 21:
+                            continue  # Вне рабочего времени
+
+                        # Проверяем, совпадает ли текущая минута с интервалом
+                        # Начинаем с 08:00, интервал в минутах
+                        minutes_since_8am = (current_hour - 8) * 60 + current_minute
+                        interval = habit.reminder_interval_minutes
+
+                        # Проверяем, попадает ли текущее время на интервал
+                        if minutes_since_8am % interval != 0:
+                            continue
+
+                        # Уникальный ключ для интервальной привычки
+                        reminder_key = f"{habit.id}_interval_{current_time}_{now.date()}"
+
+                        if reminder_key in _sent_habit_reminders:
+                            continue
+
+                        # Получаем пользователя
+                        user_result = await session.execute(
+                            select(User).where(User.id == habit.user_id)
+                        )
+                        user = user_result.scalar_one_or_none()
+                        if not user:
+                            continue
+
+                        # Формируем сообщение для воды
+                        message = "💧 Время попить воды!"
+
+                        # Кнопка для отметки
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(
+                                text="✅ Выпил",
+                                callback_data=f"habit_done_{habit.id}"
+                            )]
+                        ])
+
+                        # Проверяем режим работы пользователя
+                        is_active, _ = is_within_working_hours(user, now)
+
+                        if is_active:
+                            try:
+                                await bot.send_message(
+                                    user.telegram_id,
+                                    message,
+                                    reply_markup=keyboard
+                                )
+                                _sent_habit_reminders[reminder_key] = current_ts
+                                logger.info(f"📬 Интервальное напоминание '{habit.name}' отправлено {user.telegram_id}")
+                            except Exception as e:
+                                logger.error(f"❌ Ошибка отправки интервального напоминания: {e}")
+                        else:
+                            defer_reminder(user.telegram_id, "habit", message, keyboard)
+                            _sent_habit_reminders[reminder_key] = current_ts
+
+                        continue  # Переходим к следующей привычке
+
+                    # === ПРИВЫЧКИ С ФИКСИРОВАННЫМ РАСПИСАНИЕМ ===
                     # Получаем время напоминания (смарт или персональное)
                     # Приоритет: выученное > персональное > дефолтное
                     reminder_time = await smart_service.get_reminder_time(habit, current_day)

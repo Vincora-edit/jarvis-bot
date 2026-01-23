@@ -54,6 +54,7 @@ class HabitSetupStates(StatesGroup):
     waiting_for_bedtime = State()   # Ждём время сна
     waiting_for_custom_time = State()  # Ждём время для кастомной привычки
     waiting_for_custom_name = State()  # Ждём название кастомной привычки
+    waiting_for_interval = State()  # Ждём интервал напоминаний (для воды)
 
 
 # Состояния для уточнения самочувствия

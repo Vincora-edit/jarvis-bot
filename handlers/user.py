@@ -1465,9 +1465,9 @@ async def mood_reason_handler(message: types.Message, state: FSMContext):
 
 # Маппинг кнопок к параметрам привычек
 HABIT_PRESETS = {
-    # setup_type: "days_time" (спрашиваем дни + время), "count" (кол-во), "bedtime" (время сна), "time_of_day" (утро/вечер), "auto" (без вопросов)
+    # setup_type: "days_time" (спрашиваем дни + время), "count" (кол-во), "bedtime" (время сна), "time_of_day" (утро/вечер), "auto" (без вопросов), "interval" (интервал напоминаний)
     "sport": {"name": "Спорт", "emoji": "🏃", "target_value": None, "unit": None, "setup_type": "days_time", "question": "Какие дни тренируемся?"},
-    "water": {"name": "Вода", "emoji": "💧", "target_value": 8, "unit": "стаканов", "setup_type": "count", "question": "Сколько стаканов воды в день?"},
+    "water": {"name": "Вода", "emoji": "💧", "target_value": None, "unit": None, "setup_type": "interval", "question": "Как часто напоминать пить воду?"},
     "meditation": {"name": "Медитация", "emoji": "🧘", "target_value": None, "unit": None, "setup_type": "time_of_day", "question": "Когда медитируем?"},
     "reading": {"name": "Чтение", "emoji": "📚", "target_value": None, "unit": None, "setup_type": "time_of_day", "question": "Когда читаем?"},
     "sleep": {"name": "Сон", "emoji": "😴", "target_value": 8, "unit": "часов", "setup_type": "bedtime", "question": "Во сколько обычно ложишься спать?"},
@@ -1587,6 +1587,15 @@ async def habit_add_callback(call: types.CallbackQuery, state: FSMContext):
             reply_markup=actions.habit_count_keyboard(habit_key)
         )
         await state.set_state(HabitSetupStates.waiting_for_count)
+
+    elif setup_type == "interval":
+        # Спрашиваем интервал напоминаний (для воды)
+        await call.message.edit_text(
+            f"{preset['emoji']} **{preset['name']}**\n\n{preset['question']}",
+            parse_mode="Markdown",
+            reply_markup=actions.habit_interval_keyboard()
+        )
+        await state.set_state(HabitSetupStates.waiting_for_interval)
 
     elif setup_type == "bedtime":
         # Берём время из режима пользователя (за час до конца)
@@ -1869,6 +1878,55 @@ async def habit_count_callback(call: types.CallbackQuery, state: FSMContext):
         f"✅ Привычка добавлена!\n\n"
         f"{preset['emoji']} **{preset['name']}**\n"
         f"📅 {schedule_text}",
+        parse_mode="Markdown"
+    )
+    await state.clear()
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("hinterval_"))
+async def habit_interval_callback(call: types.CallbackQuery, state: FSMContext):
+    """Обработка выбора интервала напоминаний (для воды)"""
+    interval = int(call.data.replace("hinterval_", ""))  # 30, 60, 120, 180
+    data = await state.get_data()
+    preset = data.get("habit_preset", {})
+
+    # Форматируем текст интервала
+    if interval == 30:
+        interval_text = "каждые 30 минут"
+    elif interval == 60:
+        interval_text = "каждый час"
+    elif interval == 120:
+        interval_text = "каждые 2 часа"
+    else:  # 180
+        interval_text = "каждые 3 часа"
+
+    # Создаём привычку с интервалом
+    async with async_session() as session:
+        habit_service = HabitService(session)
+        memory = MemoryService(session)
+        user, _ = await memory.get_or_create_user(call.from_user.id)
+
+        habit = await habit_service.create_habit(
+            user_id=user.id,
+            name=preset["name"],
+            emoji=preset["emoji"],
+            target_value=None,  # Без подсчёта стаканов
+            unit=None,
+            frequency="daily"
+        )
+
+        if habit:
+            # Устанавливаем интервал напоминаний
+            habit.reminder_interval_minutes = interval
+            habit.reminder_days = "0,1,2,3,4,5,6"
+            habit.reminder_enabled = True
+            await session.commit()
+
+    await call.message.edit_text(
+        f"✅ Привычка добавлена!\n\n"
+        f"{preset['emoji']} **{preset['name']}**\n"
+        f"📅 Напоминания {interval_text} (08:00–21:00)",
         parse_mode="Markdown"
     )
     await state.clear()

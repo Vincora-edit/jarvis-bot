@@ -117,6 +117,7 @@ class Habit(Base):
     reminder_times: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON: ["07:00", "19:00"]
     reminder_days: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # "0,1,2,3,4,5,6" или "1,3,5"
     reminder_enabled: Mapped[bool] = mapped_column(default=True)
+    reminder_interval_minutes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Интервал напоминаний (30, 60, 120, 180)
 
     # Смарт-напоминания (автоматически выученные)
     learned_times: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON: {"0": ["09:15"], "1": ["09:30"]} по дням недели

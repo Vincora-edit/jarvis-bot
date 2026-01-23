@@ -380,7 +380,7 @@ class HabitService:
 # Стандартные привычки для быстрого добавления
 DEFAULT_HABITS = [
     {"name": "Спорт", "emoji": "🏃", "target_value": None, "unit": None},
-    {"name": "Вода", "emoji": "💧", "target_value": 8, "unit": "стаканов"},
+    {"name": "Вода", "emoji": "💧", "target_value": None, "unit": None},  # Теперь с интервалом напоминаний
     {"name": "Медитация", "emoji": "🧘", "target_value": None, "unit": None},
     {"name": "Чтение", "emoji": "📚", "target_value": 30, "unit": "минут"},
     {"name": "Сон", "emoji": "😴", "target_value": 8, "unit": "часов"},
