@@ -91,6 +91,31 @@ class LimitsService:
 
         return True, "OK"
 
+    async def can_create_calendar_task(self, user_id: int) -> Tuple[bool, str]:
+        """Проверить можно ли добавить задачу в календарь (недельный лимит)"""
+        plan = await self.get_user_plan(user_id)
+        limits = get_plan_limits(plan)
+
+        # Безлимит
+        if limits.calendar_tasks_per_week == 0:
+            return True, "OK"
+
+        # Считаем задачи за последние 7 дней
+        week_ago = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=7)
+        result = await self.session.execute(
+            select(func.coalesce(func.sum(DailyUsage.calendar_tasks_created), 0)).where(
+                DailyUsage.user_id == user_id,
+                DailyUsage.date >= week_ago
+            )
+        )
+        tasks_this_week = result.scalar() or 0
+
+        if tasks_this_week >= limits.calendar_tasks_per_week:
+            plan_name = get_plan_name(plan)
+            return False, f"Достигнут недельный лимит задач в календаре ({limits.calendar_tasks_per_week}) для плана «{plan_name}»."
+
+        return True, "OK"
+
     async def can_create_booking_link(self, user_id: int) -> Tuple[bool, str]:
         """Проверить можно ли создать ссылку для бронирования"""
         plan = await self.get_user_plan(user_id)
@@ -175,6 +200,12 @@ class LimitsService:
         """Увеличить счётчик напоминаний календаря"""
         usage = await self.get_or_create_daily_usage(user_id)
         usage.calendar_reminders += 1
+        await self.session.commit()
+
+    async def increment_calendar_task_usage(self, user_id: int) -> None:
+        """Увеличить счётчик задач в календаре"""
+        usage = await self.get_or_create_daily_usage(user_id)
+        usage.calendar_tasks_created += 1
         await self.session.commit()
 
     # === ТРИАЛ VPN ===

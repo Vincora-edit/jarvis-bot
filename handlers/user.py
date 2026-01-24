@@ -3058,11 +3058,22 @@ async def handle_all_messages(message: types.Message, state: FSMContext):
         ai = AIService(session)
         memory = MemoryService(session)
         limits = LimitsService(session)
-        user, _ = await memory.get_or_create_user(
+        user, is_new = await memory.get_or_create_user(
             telegram_id=message.from_user.id,
             username=message.from_user.username,
             first_name=message.from_user.first_name,
         )
+
+        # Если новый пользователь — показываем приветствие и просим /start
+        if is_new:
+            name = message.from_user.first_name or ""
+            greeting = f"Привет{', ' + name if name else ''}!" if name else "Привет!"
+            await message.answer(
+                f"{greeting} Я Джарвис — твой личный AI-ассистент.\n\n"
+                "Нажми /start чтобы начать и настроить бота под себя.",
+                reply_markup=actions.main_menu()
+            )
+            return
 
         # Проверяем лимит AI запросов
         can_use, limit_error = await limits.can_use_ai(user.id)
@@ -3131,6 +3142,16 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
     location = action.get("location")  # Место события
 
     try:
+        # Проверяем лимит задач в календаре
+        if telegram_id:
+            async with async_session() as session:
+                limits = LimitsService(session)
+                memory = MemoryService(session)
+                user, _ = await memory.get_or_create_user(telegram_id)
+                can_create, limit_error = await limits.can_create_calendar_task(user.id)
+                if not can_create:
+                    return f"⚠️ {limit_error}\n\nПерейдите на более высокий тариф."
+
         cal = await get_user_calendar_service(telegram_id) if telegram_id else None
         if cal is None:
             return "❌ Календарь не подключён. Используй /connect_calendar"
@@ -3221,6 +3242,10 @@ async def handle_create_task(action: dict, message: types.Message = None, state:
                     status="pending"
                 )
                 session.add(task)
+
+                # Увеличиваем счётчик задач в календаре
+                limits = LimitsService(session)
+                await limits.increment_calendar_task_usage(user.id)
 
                 # Планируем точные напоминания (если есть event_id)
                 if event_id and not recurrence:  # Для повторяющихся событий пока не поддерживаем

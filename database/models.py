@@ -488,6 +488,7 @@ class DailyUsage(Base):
     ai_requests: Mapped[int] = mapped_column(Integer, default=0)  # AI запросы
     reminders_created: Mapped[int] = mapped_column(Integer, default=0)  # Созданные напоминания
     calendar_reminders: Mapped[int] = mapped_column(Integer, default=0)  # Напоминания календаря
+    calendar_tasks_created: Mapped[int] = mapped_column(Integer, default=0)  # Задачи добавленные в календарь
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
