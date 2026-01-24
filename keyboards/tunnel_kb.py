@@ -27,13 +27,13 @@ def tunnel_menu_keyboard(
         if keys_count < max_keys:
             buttons.append([
                 InlineKeyboardButton(
-                    text="➕ Добавить устройство",
+                    text="➕ Добавить устройство / Создать ключ",
                     callback_data="tunnel:add_device"
                 )
             ])
 
-        # Продлить
-        buttons.append([InlineKeyboardButton(text="💳 Продлить", callback_data="tunnel:renew")])
+        # Тарифы
+        buttons.append([InlineKeyboardButton(text="💎 Тарифы", callback_data="tunnel:plans")])
     else:
         # Кнопка триала если доступен
         if show_trial:
@@ -137,7 +137,7 @@ def devices_keyboard(keys: list, can_add: bool = False) -> InlineKeyboardMarkup:
     # Кнопка добавления если можно
     if can_add:
         buttons.append([
-            InlineKeyboardButton(text="➕ Добавить устройство", callback_data="tunnel:add_device")
+            InlineKeyboardButton(text="➕ Добавить устройство / Создать ключ", callback_data="tunnel:add_device")
         ])
 
     buttons.append([

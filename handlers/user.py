@@ -158,40 +158,31 @@ async def command_start(message: types.Message):
     await message.answer(
         f"{greeting} Я Джарвис — твой личный AI-ассистент.\n\n"
         "Помогу организовать день, поставлю напоминания, отслежу привычки "
-        "и поддержу в достижении целей. Веду календарь, разбираю голосовые, "
-        "понимаю скриншоты и помогаю разгрузить голову. "
-        "А ещё у меня есть встроенный VPN.\n\n"
-        "Если хочешь узнать, что я умею — спроси «Что ты умеешь?» или нажми /help",
+        "и поддержу в достижении целей.",
         reply_markup=actions.main_menu()
     )
 
-    # Если новый пользователь — спрашиваем режим работы
+    # Если новый пользователь — начинаем пошаговый онбординг
     if is_new:
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
+        # Задержка перед следующим сообщением
+        await asyncio.sleep(1.5)
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="06:00", callback_data="wh_init_start_06:00"),
-                InlineKeyboardButton(text="07:00", callback_data="wh_init_start_07:00"),
-                InlineKeyboardButton(text="08:00 ✓", callback_data="wh_init_start_08:00"),
-            ],
-            [
-                InlineKeyboardButton(text="09:00", callback_data="wh_init_start_09:00"),
-                InlineKeyboardButton(text="10:00", callback_data="wh_init_start_10:00"),
-                InlineKeyboardButton(text="11:00", callback_data="wh_init_start_11:00"),
+                InlineKeyboardButton(text="✅ Готов", callback_data="onboard_mode_ready"),
+                InlineKeyboardButton(text="⏭ Пропустить", callback_data="onboard_mode_skip"),
             ],
         ])
 
         await message.answer(
-            "⏰ **Настроим режим работы**\n\n"
-            "С какого времени мне можно писать тебе?\n"
-            "Напоминания вне этого времени будут отложены.",
-            parse_mode="Markdown",
+            "⏰ Для начала настроим режим — в какое время буду тебе писать.\n\n"
+            "Готов?",
             reply_markup=keyboard
         )
 
-    # Для существующих пользователей — не навязываем календарь,
-    # они сами могут подключить через /connect_calendar или /tunnel для VPN
+    # Для существующих пользователей — не навязываем онбординг
 
 
 HELP_TEXT = """
@@ -3893,11 +3884,12 @@ async def wh_init_end_time(call: types.CallbackQuery, state: FSMContext):
     await state.clear()
 
     await call.message.edit_text(
-        f"✅ **Режим настроен!**\n\n"
-        f"Буду писать тебе с **{start_time}** до **{time_str}**\n\n"
-        f"Изменить можно командой /режим",
-        parse_mode="Markdown"
+        f"✅ Режим настроен: {start_time} — {time_str}\n\n"
+        f"Изменить можно командой /режим"
     )
+
+    # Задержка перед следующим шагом
+    await asyncio.sleep(1.5)
 
     # Предлагаем выбрать: подключить календарь или настроить VPN
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -3912,7 +3904,7 @@ async def wh_init_end_time(call: types.CallbackQuery, state: FSMContext):
 
     # Кнопка VPN
     keyboard_buttons.append([
-        InlineKeyboardButton(text="🔐 Настроить VPN", callback_data="onboard_vpn")
+        InlineKeyboardButton(text="🔐 Попробовать VPN бесплатно", callback_data="onboard_vpn")
     ])
 
     # Кнопка пропустить
@@ -3921,10 +3913,7 @@ async def wh_init_end_time(call: types.CallbackQuery, state: FSMContext):
     ])
 
     await call.message.answer(
-        "🚀 **Что настроим первым?**\n\n"
-        "📅 *Календарь* — синхронизирую твоё расписание с Google Calendar\n\n"
-        "🔐 *VPN* — безопасный доступ к интернету, 7 дней бесплатно",
-        parse_mode="Markdown",
+        "🚀 Что настроим?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     )
 
@@ -3976,6 +3965,69 @@ async def onboard_skip(call: types.CallbackQuery):
         "📅 /connect\\_calendar — подключить Google Calendar\n"
         "🔐 /tunnel — настроить VPN",
         parse_mode="Markdown"
+    )
+
+
+@router.callback_query(F.data == "onboard_mode_ready")
+async def onboard_mode_ready(call: types.CallbackQuery):
+    """Онбординг: пользователь готов настроить режим"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="06:00", callback_data="wh_init_start_06:00"),
+            InlineKeyboardButton(text="07:00", callback_data="wh_init_start_07:00"),
+            InlineKeyboardButton(text="08:00 ✓", callback_data="wh_init_start_08:00"),
+        ],
+        [
+            InlineKeyboardButton(text="09:00", callback_data="wh_init_start_09:00"),
+            InlineKeyboardButton(text="10:00", callback_data="wh_init_start_10:00"),
+            InlineKeyboardButton(text="11:00", callback_data="wh_init_start_11:00"),
+        ],
+    ])
+
+    await call.message.edit_text(
+        "⏰ С какого времени тебе можно писать?\n\n"
+        "Выбери время, когда ты обычно просыпаешься:",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data == "onboard_mode_skip")
+async def onboard_mode_skip(call: types.CallbackQuery):
+    """Онбординг: пропустить настройку режима, перейти к следующему шагу"""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+    await call.message.edit_text(
+        "👌 Ок, оставлю стандартный режим (08:00 — 22:00).\n"
+        "Изменить можно в любой момент: /режим"
+    )
+
+    # Задержка перед следующим шагом
+    await asyncio.sleep(1.5)
+
+    # Предлагаем выбрать: подключить календарь или настроить VPN
+    keyboard_buttons = []
+
+    # Кнопка календаря (если OAuth настроен)
+    if config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="📅 Подключить календарь", callback_data="onboard_calendar")
+        ])
+
+    # Кнопка VPN
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="🔐 Попробовать VPN бесплатно", callback_data="onboard_vpn")
+    ])
+
+    # Кнопка пропустить
+    keyboard_buttons.append([
+        InlineKeyboardButton(text="⏭ Пропустить", callback_data="onboard_skip")
+    ])
+
+    await call.message.answer(
+        "🚀 Что настроим?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     )
 
 
