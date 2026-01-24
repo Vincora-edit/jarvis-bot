@@ -851,7 +851,11 @@ async def callback_plans(callback: types.CallbackQuery):
         else:
             text += f"• Напоминания: {reminders['used']}/{reminders['limit']}\n"
 
-        text += f"• VPN: {usage_info['vpn_devices']} устр.\n"
+        vpn = usage_info["vpn_devices"]
+        if vpn["available"]:
+            text += f"• VPN: {vpn['used']}/{vpn['limit']} устр.\n"
+        else:
+            text += "• VPN: нет доступа\n"
 
         text += "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
 

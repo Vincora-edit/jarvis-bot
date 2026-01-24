@@ -175,4 +175,4 @@ class TestUsageInfo:
         assert info["plan"] == "pro"
         assert info["habits"]["unlimited"] is True
         assert info["ai_requests"]["unlimited"] is True
-        assert info["vpn_devices"] == 5
+        assert info["vpn_devices"]["limit"] == 5

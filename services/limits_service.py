@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import User, Habit, Reminder, BookingLink, DailyUsage
+from database.models import User, Habit, Reminder, BookingLink, DailyUsage, TunnelKey
 from services.plans import get_plan_limits, get_plan_name, is_limit_exceeded, PLANS
 
 
@@ -259,6 +259,19 @@ class LimitsService:
         )
         booking_links_count = result.scalar() or 0
 
+        # Считаем VPN ключи и определяем лимит
+        result = await self.session.execute(
+            select(func.count(TunnelKey.id)).where(
+                TunnelKey.user_id == user_id,
+                TunnelKey.is_active == True
+            )
+        )
+        vpn_keys_count = result.scalar() or 0
+
+        # Определяем лимит VPN (с учётом триала)
+        can_vpn, vpn_msg, vpn_limit = await self.can_use_vpn(user_id)
+        vpn_available = can_vpn or vpn_keys_count > 0  # Доступен если есть ключи или можно создать
+
         return {
             "plan": plan,
             "plan_name": get_plan_name(plan),
@@ -288,7 +301,11 @@ class LimitsService:
                 "unlimited": limits.booking_links_max == 0,
                 "available": limits.booking_links_max > 0
             },
-            "vpn_devices": limits.vpn_devices,
+            "vpn_devices": {
+                "used": vpn_keys_count,
+                "limit": vpn_limit,
+                "available": vpn_available
+            },
             "analytics": {
                 "enabled": limits.analytics_enabled,
                 "weekly": limits.analytics_weekly,
