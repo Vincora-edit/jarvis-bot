@@ -816,36 +816,89 @@ async def process_rename(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "tunnel:plans")
 async def callback_plans(callback: types.CallbackQuery):
-    """Показать тарифы"""
+    """Показать тарифы с текущим планом пользователя"""
     try:
-        text = (
-            "💳 *Подписка на Jarvis*\n\n"
-            "Подписка открывает все возможности:\n"
-            "• AI-ассистент без ограничений\n"
-            "• VPN для всех устройств\n"
-            "• Расширенные лимиты\n\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "📦 *Basic* — 199₽/мес\n"
-            "└ 50 AI запросов/день\n"
-            "└ 1 VPN устройство\n"
-            "└ 5 привычек, 10 напоминаний\n\n"
-            "🚀 *Standard* — 399₽/мес\n"
-            "└ 100 AI запросов/день\n"
-            "└ 3 VPN устройства\n"
-            "└ 10 привычек, 20 напоминаний\n"
-            "└ Недельная аналитика\n\n"
-            "💎 *Pro* — 799₽/мес\n"
-            "└ Безлимит AI\n"
-            "└ 5 VPN устройств\n"
-            "└ Всё без ограничений\n"
-            "└ AI-инсайты\n\n"
-            "🎁 Есть промокод? Нажмите кнопку ниже"
-        )
+        user_id = callback.from_user.id
+
+        async with async_session() as session:
+            limits_service = LimitsService(session)
+            usage_info = await limits_service.get_usage_info(user_id)
+
+        plan = usage_info["plan"]
+        plan_name = usage_info["plan_name"]
+
+        # Формируем текст текущего плана
+        current_plan_text = f"📊 *Ваш тариф: {plan_name}*\n\n"
+
+        # Лимиты
+        habits = usage_info["habits"]
+        ai = usage_info["ai_requests"]
+        reminders = usage_info["reminders"]
+
+        if habits["unlimited"]:
+            current_plan_text += "• Привычки: ∞\n"
+        else:
+            current_plan_text += f"• Привычки: {habits['used']}/{habits['limit']}\n"
+
+        if ai["unlimited"]:
+            current_plan_text += "• AI-запросы сегодня: ∞\n"
+        else:
+            current_plan_text += f"• AI-запросы сегодня: {ai['used']}/{ai['limit']}\n"
+
+        if reminders["unlimited"]:
+            current_plan_text += "• Напоминания сегодня: ∞\n"
+        else:
+            current_plan_text += f"• Напоминания сегодня: {reminders['used']}/{reminders['limit']}\n"
+
+        current_plan_text += f"• VPN устройств: {usage_info['vpn_devices']}\n"
+
+        text = current_plan_text + "\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        # Доступные тарифы (только выше текущего)
+        if plan == "free":
+            text += (
+                "📦 *Базовый* — 199₽/мес\n"
+                "└ 3 привычки, 5 напоминаний/день\n"
+                "└ 20 AI-запросов/день\n"
+                "└ 1 VPN устройство\n\n"
+                "⭐ *Стандарт* — 399₽/мес\n"
+                "└ 5 привычек, 10 напоминаний/день\n"
+                "└ 50 AI-запросов/день\n"
+                "└ 3 VPN устройства\n"
+                "└ Недельная аналитика\n\n"
+                "💎 *Про* — 599₽/мес\n"
+                "└ Безлимит на всё\n"
+                "└ 5 VPN устройств\n"
+                "└ AI-инсайты\n"
+            )
+        elif plan == "basic":
+            text += (
+                "⭐ *Стандарт* — 399₽/мес\n"
+                "└ 5 привычек, 10 напоминаний/день\n"
+                "└ 50 AI-запросов/день\n"
+                "└ 3 VPN устройства\n"
+                "└ Недельная аналитика\n\n"
+                "💎 *Про* — 599₽/мес\n"
+                "└ Безлимит на всё\n"
+                "└ 5 VPN устройств\n"
+                "└ AI-инсайты\n"
+            )
+        elif plan == "standard":
+            text += (
+                "💎 *Про* — 599₽/мес\n"
+                "└ Безлимит на всё\n"
+                "└ 5 VPN устройств\n"
+                "└ AI-инсайты\n"
+            )
+        else:
+            text += "✨ У вас максимальный тариф!\n"
+
+        text += "\n🎁 Есть промокод? Нажмите кнопку ниже"
 
         await callback.message.edit_text(
             text,
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=plans_keyboard()
+            reply_markup=plans_keyboard(current_plan=plan, show_back=True)
         )
     except Exception as e:
         logger.error(f"Error in callback_plans: {e}")
@@ -859,7 +912,7 @@ async def callback_buy(callback: types.CallbackQuery):
         parts = callback.data.split(":")
         plan = parts[2]
 
-        plan_names = {"basic": "Basic", "pro": "Pro", "premium": "Premium"}
+        plan_names = {"basic": "Базовый", "standard": "Стандарт", "pro": "Про"}
         plan_name = plan_names.get(plan, plan)
 
         text = (

@@ -51,8 +51,14 @@ def tunnel_menu_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def plans_keyboard(show_trial: bool = False) -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа (Джарвис)"""
+def plans_keyboard(show_trial: bool = False, current_plan: str = "free", show_back: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура выбора тарифа (Джарвис)
+
+    Args:
+        show_trial: показывать кнопку триала
+        current_plan: текущий план пользователя (показываем только выше)
+        show_back: показывать кнопку "Назад" (False для главного меню)
+    """
     buttons = []
 
     # Триал если доступен
@@ -61,38 +67,48 @@ def plans_keyboard(show_trial: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🎁 7 дней бесплатно", callback_data="tunnel:trial")
         ])
 
-    # Тарифы Джарвиса
-    buttons.extend([
-        [
-            InlineKeyboardButton(text="📦 Базовый 199₽", callback_data="tunnel:buy:basic:1"),
-        ],
-        [
-            InlineKeyboardButton(text="⭐ Стандарт 399₽", callback_data="tunnel:buy:standard:1"),
-        ],
-        [
-            InlineKeyboardButton(text="💎 Про 799₽", callback_data="tunnel:buy:pro:1"),
-        ],
-        [
+    # Тарифы Джарвиса (показываем только те, что выше текущего)
+    if current_plan in ["free"]:
+        buttons.append([
+            InlineKeyboardButton(text="📦 Базовый 199₽/мес", callback_data="tunnel:buy:basic"),
+        ])
+    if current_plan in ["free", "basic"]:
+        buttons.append([
+            InlineKeyboardButton(text="⭐ Стандарт 399₽/мес", callback_data="tunnel:buy:standard"),
+        ])
+    if current_plan in ["free", "basic", "standard"]:
+        buttons.append([
+            InlineKeyboardButton(text="💎 Про 599₽/мес", callback_data="tunnel:buy:pro"),
+        ])
+
+    # Промокод + опционально Назад
+    if show_back:
+        buttons.append([
             InlineKeyboardButton(text="🎁 Промокод", callback_data="tunnel:promo"),
             InlineKeyboardButton(text="◀️ Назад", callback_data="tunnel:menu")
-        ]
-    ])
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(text="🎁 Ввести промокод", callback_data="tunnel:promo")
+        ])
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def plan_periods_keyboard(plan: str) -> InlineKeyboardMarkup:
     """Выбор периода подписки"""
+    # Цены из services/plans.py (в рублях)
     prices = {
-        "basic": {"1": "199₽", "3": "499₽", "12": "1799₽"},
-        "standard": {"1": "399₽", "3": "999₽", "12": "3599₽"},
-        "pro": {"1": "799₽", "3": "1999₽", "12": "7199₽"},
+        "basic": {"1": "199₽", "3": "499₽", "12": "1699₽"},
+        "standard": {"1": "399₽", "3": "999₽", "12": "3399₽"},
+        "pro": {"1": "599₽", "3": "1499₽", "12": "4999₽"},
     }
     p = prices.get(plan, prices["basic"])
 
     buttons = [
         [InlineKeyboardButton(text=f"1 месяц — {p['1']}", callback_data=f"tunnel:pay:{plan}:1")],
-        [InlineKeyboardButton(text=f"3 месяца — {p['3']} (экономия 15%)", callback_data=f"tunnel:pay:{plan}:3")],
-        [InlineKeyboardButton(text=f"12 месяцев — {p['12']} (экономия 25%)", callback_data=f"tunnel:pay:{plan}:12")],
+        [InlineKeyboardButton(text=f"3 месяца — {p['3']} (экономия ~17%)", callback_data=f"tunnel:pay:{plan}:3")],
+        [InlineKeyboardButton(text=f"12 месяцев — {p['12']} (экономия ~30%)", callback_data=f"tunnel:pay:{plan}:12")],
         [InlineKeyboardButton(text="◀️ К тарифам", callback_data="tunnel:plans")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
