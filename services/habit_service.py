@@ -227,6 +227,14 @@ class HabitService:
         habits = await self.get_user_habits(user_id)
         today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
+        # Получаем режим пользователя для расчёта интервальных привычек
+        user_result = await self.session.execute(
+            select(User).where(User.id == user_id)
+        )
+        user = user_result.scalar_one_or_none()
+        morning_time = user.morning_time if user else "08:00"
+        evening_time = user.evening_time if user else "22:00"
+
         status = []
         for habit in habits:
             result = await self.session.execute(
@@ -239,8 +247,21 @@ class HabitService:
 
             # Определяем эффективный target:
             # 1. Явный target_value
-            # 2. Количество напоминаний (если > 1)
+            # 2. Количество интервалов (если reminder_interval_minutes)
+            # 3. Количество напоминаний (если reminder_times > 1)
             effective_target = habit.target_value
+
+            # Для интервальных привычек (вода каждый час)
+            if effective_target is None and habit.reminder_interval_minutes:
+                try:
+                    start_h = int(morning_time.split(":")[0])
+                    end_h = int(evening_time.split(":")[0])
+                    total_minutes = (end_h - start_h) * 60
+                    effective_target = total_minutes // habit.reminder_interval_minutes
+                except (ValueError, AttributeError):
+                    effective_target = None
+
+            # Для привычек с несколькими фиксированными напоминаниями
             if effective_target is None and habit.reminder_times:
                 try:
                     times = json.loads(habit.reminder_times)
@@ -259,6 +280,7 @@ class HabitService:
                 "habit": habit,
                 "done": is_done,
                 "value": log.value if log else 0,
+                "target": effective_target,  # Добавляем target для отображения
             })
 
         stats = await self.get_or_create_stats(user_id)
@@ -301,7 +323,6 @@ class HabitService:
 
     def format_habits_message(self, status: dict) -> str:
         """Форматировать сообщение со статусом привычек — минималистичный дизайн"""
-        import json
 
         if not status["habits"]:
             return (
@@ -320,22 +341,10 @@ class HabitService:
             habit = item["habit"]
             done = item["done"]
             value = item["value"]
+            effective_target = item.get("target")  # Уже рассчитано в get_today_status
 
             # Галочка только когда выполнено
             check = "✅ " if done else ""
-
-            # Определяем целевое значение:
-            # 1. Явно заданное target_value
-            # 2. Количество напоминаний (если есть reminder_times)
-            # 3. None для простых привычек
-            effective_target = habit.target_value
-            if effective_target is None and habit.reminder_times:
-                try:
-                    times = json.loads(habit.reminder_times)
-                    if isinstance(times, list) and len(times) > 1:
-                        effective_target = len(times)
-                except (json.JSONDecodeError, TypeError):
-                    pass
 
             # Прогресс для привычек с целью (кроме сна)
             habit_name_lower = habit.name.lower()

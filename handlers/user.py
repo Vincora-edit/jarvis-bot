@@ -2318,8 +2318,25 @@ async def habit_done_callback(call: types.CallbackQuery):
             await call.answer("Привычка не найдена")
             return
 
-        # Определяем effective_target (target_value или количество reminder_times)
+        # Определяем effective_target:
+        # 1. Явный target_value
+        # 2. Количество интервалов (reminder_interval_minutes)
+        # 3. Количество reminder_times
         effective_target = habit.target_value
+
+        # Для интервальных привычек (вода каждый час)
+        if effective_target is None and habit.reminder_interval_minutes:
+            try:
+                morning_time = user.morning_time or "08:00"
+                evening_time = user.evening_time or "22:00"
+                start_h = int(morning_time.split(":")[0])
+                end_h = int(evening_time.split(":")[0])
+                total_minutes = (end_h - start_h) * 60
+                effective_target = total_minutes // habit.reminder_interval_minutes
+            except (ValueError, AttributeError):
+                pass
+
+        # Для привычек с несколькими фиксированными напоминаниями
         if effective_target is None and habit.reminder_times:
             try:
                 import json
