@@ -16,6 +16,7 @@ class PlanLimits:
 
     # Календарь
     calendar_reminders_per_day: int  # Макс. напоминаний календаря в день (0 = безлимит)
+    calendar_tasks_per_week: int  # Макс. задач в календарь в неделю (0 = безлимит)
 
     # AI
     ai_requests_per_day: int  # Макс. AI запросов в день (0 = безлимит)
@@ -36,9 +37,10 @@ class PlanLimits:
 # Конфигурация тарифов
 PLANS = {
     "free": PlanLimits(
-        habits_max=3,
+        habits_max=1,
         reminders_per_day=3,
         calendar_reminders_per_day=3,
+        calendar_tasks_per_week=3,
         ai_requests_per_day=5,
         vpn_devices=0,
         vpn_trial_days=7,  # 7 дней триал
@@ -48,10 +50,11 @@ PLANS = {
         analytics_ai_insights=False,
     ),
     "basic": PlanLimits(
-        habits_max=5,
-        reminders_per_day=10,
+        habits_max=3,
+        reminders_per_day=5,
         calendar_reminders_per_day=10,
-        ai_requests_per_day=50,
+        calendar_tasks_per_week=20,
+        ai_requests_per_day=20,
         vpn_devices=1,
         vpn_trial_days=0,
         booking_links_max=1,
@@ -60,13 +63,14 @@ PLANS = {
         analytics_ai_insights=False,
     ),
     "standard": PlanLimits(
-        habits_max=10,
-        reminders_per_day=20,
+        habits_max=5,
+        reminders_per_day=10,
         calendar_reminders_per_day=20,
-        ai_requests_per_day=100,
+        calendar_tasks_per_week=50,
+        ai_requests_per_day=50,
         vpn_devices=3,
         vpn_trial_days=0,
-        booking_links_max=5,
+        booking_links_max=3,
         analytics_enabled=True,
         analytics_weekly=True,
         analytics_ai_insights=False,
@@ -75,6 +79,7 @@ PLANS = {
         habits_max=0,  # Безлимит
         reminders_per_day=0,  # Безлимит
         calendar_reminders_per_day=0,  # Безлимит
+        calendar_tasks_per_week=0,  # Безлимит
         ai_requests_per_day=0,  # Безлимит
         vpn_devices=5,
         vpn_trial_days=0,

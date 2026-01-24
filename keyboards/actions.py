@@ -7,7 +7,7 @@ def main_menu():
             [KeyboardButton(text="📋 План"), KeyboardButton(text="✅ Привычки")],
             [KeyboardButton(text="🧠 Разгрузка"), KeyboardButton(text="⚙️ Режим")],
             [KeyboardButton(text="📅 Букинг"), KeyboardButton(text="🔒 Туннель")],
-            [KeyboardButton(text="👥 Рефералы")]
+            [KeyboardButton(text="💎 Тарифы"), KeyboardButton(text="👥 Рефералы")]
         ],
         resize_keyboard=True
     )

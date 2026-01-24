@@ -321,17 +321,13 @@ async def command_help(message: types.Message):
     await message.answer(HELP_TEXT.strip(), parse_mode="Markdown")
 
 
-@router.message(Command("tarif"))
-async def command_tarif(message: types.Message):
-    """Показать тарифы"""
-    from services.plans import PLANS, PLAN_PRICES, PLAN_NAMES
-
-    text = """💎 **Тарифные планы Джарвиса**
+TARIFF_TEXT = """💎 **Тарифные планы Джарвиса**
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
 🆓 **Бесплатный**
-• Привычки: до 3
+• Привычки: 1
+• Задач в календарь: 3/неделю
 • Напоминаний в день: 3
 • AI запросов в день: 5
 • VPN: триал 7 дней
@@ -340,12 +336,13 @@ async def command_tarif(message: types.Message):
 ━━━━━━━━━━━━━━━━━━━━━━
 
 ⭐ **Базовый** — 199₽/мес
-• Привычки: до 5
-• Напоминаний в день: 10
-• AI запросов в день: 50
+• Привычки: до 3
+• Задач в календарь: 20/неделю
+• Напоминаний в день: 5
+• AI запросов в день: 20
 • VPN: 1 устройство
 • Букинг: 1 ссылка
-• Аналитика: базовая
+• Статистика привычек
 
 📦 499₽ за 3 мес _(скидка 17%)_
 📦 1699₽ за год _(скидка 29%)_
@@ -353,12 +350,13 @@ async def command_tarif(message: types.Message):
 ━━━━━━━━━━━━━━━━━━━━━━
 
 ⚡ **Стандарт** — 399₽/мес
-• Привычки: до 10
-• Напоминаний в день: 20
-• AI запросов в день: 100
+• Привычки: до 5
+• Задач в календарь: 50/неделю
+• Напоминаний в день: 10
+• AI запросов в день: 50
 • VPN: 3 устройства
-• Букинг: 5 ссылок
-• Аналитика + недельные отчёты
+• Букинг: 3 ссылки
+• Статистика + недельные отчёты
 
 📦 999₽ за 3 мес _(скидка 17%)_
 📦 3399₽ за год _(скидка 29%)_
@@ -367,20 +365,33 @@ async def command_tarif(message: types.Message):
 
 🚀 **Про** — 599₽/мес
 • Привычки: безлимит
+• Задачи в календарь: безлимит
 • Напоминания: безлимит
 • AI запросы: безлимит
 • VPN: 5 устройств
 • Букинг: безлимит
-• Полная аналитика + AI-инсайты
+• Полная статистика + AI-советы _(скоро)_
 
 📦 1499₽ за 3 мес _(скидка 17%)_
 📦 4999₽ за год _(скидка 31%)_
 
 ━━━━━━━━━━━━━━━━━━━━━━
 
-💡 Для подключения используй /tunnel → Тарифы
+⚠️ Оплата временно недоступна.
+Для активации напиши @subbotin\\_core
 """
-    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("tarif"))
+async def command_tarif(message: types.Message):
+    """Показать тарифы"""
+    await message.answer(TARIFF_TEXT, parse_mode="Markdown")
+
+
+@router.message(F.text == "💎 Тарифы")
+async def button_tarif(message: types.Message):
+    """Показать тарифы по кнопке"""
+    await message.answer(TARIFF_TEXT, parse_mode="Markdown")
 
 
 @router.message(Command("ref"))

@@ -21,11 +21,11 @@ class TestHabitLimits:
 
     @pytest.mark.asyncio
     async def test_free_user_cannot_exceed_habit_limit(self, session, user_with_habits):
-        """Free пользователь не может превысить лимит в 3 привычки"""
+        """Free пользователь не может превысить лимит в 1 привычку"""
         limits = LimitsService(session)
         can_add, message = await limits.can_add_habit(user_with_habits.id)
         assert can_add is False
-        assert "3" in message  # Лимит 3 привычки
+        assert "1" in message  # Лимит 1 привычка
         assert "Бесплатный" in message
 
     @pytest.mark.asyncio
@@ -162,7 +162,7 @@ class TestUsageInfo:
         info = await limits.get_usage_info(test_user.id)
 
         assert info["plan"] == "free"
-        assert info["habits"]["limit"] == 3
+        assert info["habits"]["limit"] == 1
         assert info["ai_requests"]["limit"] == 5
         assert info["booking_links"]["available"] is False
 
