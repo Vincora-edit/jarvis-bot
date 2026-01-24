@@ -402,7 +402,7 @@ async def process_add_device_name(message: types.Message, state: FSMContext):
         data = await state.get_data()
         is_trial = data.get("is_trial_activation", False)
 
-        await message.answer("⏳ Создаю ключ...")
+        loading_msg = await message.answer("⏳ Создаю ключ...")
 
         async with async_session() as session:
             memory = MemoryService(session)
@@ -461,12 +461,23 @@ async def process_add_device_name(message: types.Message, state: FSMContext):
                         f"`{sub_url}`\n\n"
                         f"_Нажми на ссылку, чтобы скопировать._"
                     )
+                # Удаляем сообщение "Создаю ключ..."
+                try:
+                    await loading_msg.delete()
+                except Exception:
+                    pass
+
                 await message.answer(
                     text,
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=back_to_menu_keyboard()
                 )
             else:
+                try:
+                    await loading_msg.delete()
+                except Exception:
+                    pass
+
                 await message.answer(
                     f"❌ Ошибка: {error}\n\nПопробуйте позже.",
                     reply_markup=back_to_menu_keyboard()
@@ -475,6 +486,10 @@ async def process_add_device_name(message: types.Message, state: FSMContext):
         await state.clear()
     except Exception as e:
         logger.error(f"Error in process_add_device_name: {e}")
+        try:
+            await loading_msg.delete()
+        except Exception:
+            pass
         await message.answer(
             "❌ Произошла ошибка при создании ключа. Попробуйте позже.",
             reply_markup=back_to_menu_keyboard()
@@ -869,8 +884,8 @@ async def callback_plans(callback: types.CallbackQuery):
                 "• AI запросов: 20/день\n"
                 "• VPN: 1 устройство\n"
                 "• Букинг: 1 ссылка\n"
-                "• Статистика привычек\n"
-                "_499₽ за 3 мес · 1699₽ за год_\n\n"
+                "• Статистика привычек\n\n"
+                "💰 _499₽/3 мес (-17%) · 1699₽/год (-29%)_\n\n"
             )
 
         if plan in ["free", "basic"]:
@@ -882,8 +897,8 @@ async def callback_plans(callback: types.CallbackQuery):
                 "• AI запросов: 50/день\n"
                 "• VPN: 3 устройства\n"
                 "• Букинг: 3 ссылки\n"
-                "• Статистика + недельные отчёты\n"
-                "_999₽ за 3 мес · 3399₽ за год_\n\n"
+                "• Статистика + недельные отчёты\n\n"
+                "💰 _999₽/3 мес (-17%) · 3399₽/год (-29%)_\n\n"
             )
 
         if plan in ["free", "basic", "standard"]:
@@ -895,8 +910,8 @@ async def callback_plans(callback: types.CallbackQuery):
                 "• AI запросы: безлимит\n"
                 "• VPN: 5 устройств\n"
                 "• Букинг: безлимит\n"
-                "• Полная статистика + AI-советы\n"
-                "_1499₽ за 3 мес · 4999₽ за год_\n"
+                "• Полная статистика + AI-советы\n\n"
+                "💰 _1499₽/3 мес (-17%) · 4999₽/год (-31%)_\n"
             )
 
         if plan == "pro":
