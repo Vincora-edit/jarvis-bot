@@ -1192,6 +1192,108 @@ async def _notify_user_about_payment(body: dict, session):
         print(f"[YooKassa Webhook] Notify error: {e}")
 
 
+# === ПУБЛИЧНЫЕ СТРАНИЦЫ ===
+
+@app.get("/offer", response_class=HTMLResponse)
+async def public_offer():
+    """Публичная оферта (без авторизации)"""
+    offer_html = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Публичная оферта — Джарвис</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #667eea; margin-bottom: 10px; font-size: 28px; }
+        h2 { color: #333; margin: 30px 0 15px; font-size: 20px; border-bottom: 2px solid #667eea; padding-bottom: 5px; }
+        h3 { color: #555; margin: 20px 0 10px; font-size: 16px; }
+        p { margin: 10px 0; }
+        ul, ol { margin: 10px 0 10px 25px; }
+        li { margin: 5px 0; }
+        .meta { color: #888; font-size: 14px; margin-bottom: 30px; }
+        .highlight { background: #f0f4ff; padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .requisites { background: #f9f9f9; padding: 20px; border-radius: 8px; margin-top: 30px; }
+        hr { border: none; border-top: 1px solid #eee; margin: 30px 0; }
+        a { color: #667eea; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ПУБЛИЧНАЯ ОФЕРТА</h1>
+        <p style="font-size: 18px; color: #555;">на оказание услуг сервиса «Джарвис»</p>
+        <p class="meta">Дата публикации: 25 января 2026 г. | Версия: 1.0</p>
+
+        <h2>1. ОБЩИЕ ПОЛОЖЕНИЯ</h2>
+        <p>1.1. Настоящий документ является официальным предложением (публичной офертой) ИП Субботин Артём Денисович (далее — «Исполнитель») и содержит все существенные условия оказания услуг сервиса «Джарвис» (далее — «Сервис»).</p>
+        <p>1.2. В соответствии со статьёй 437 Гражданского кодекса Российской Федерации настоящий документ является публичной офертой.</p>
+        <p>1.3. Акцептом настоящей оферты является оплата услуг Сервиса любым доступным способом.</p>
+
+        <h2>2. ПРЕДМЕТ ОФЕРТЫ</h2>
+        <p>Исполнитель обязуется предоставить Пользователю доступ к функциям Сервиса в соответствии с выбранным тарифным планом.</p>
+
+        <div class="highlight">
+            <h3>Тарифные планы:</h3>
+            <ul>
+                <li><strong>Бесплатный:</strong> 5 AI-запросов/день, 3 привычки, VPN 7 дней</li>
+                <li><strong>Базовый (199 ₽/мес):</strong> 30 AI-запросов/день, 5 привычек, VPN 1 устройство</li>
+                <li><strong>Стандарт (399 ₽/мес):</strong> 100 AI-запросов/день, 10 привычек, VPN 3 устройства</li>
+                <li><strong>Про (599 ₽/мес):</strong> Без ограничений, VPN 5 устройств, бронирование встреч</li>
+            </ul>
+        </div>
+
+        <h2>3. ОПЛАТА</h2>
+        <p>Оплата производится в российских рублях через платёжную систему ЮKassa (ООО НКО «ЮМани»).</p>
+        <p>Способы оплаты: банковские карты (Visa, MasterCard, МИР), SberPay, ЮMoney.</p>
+
+        <h2>4. ВОЗВРАТ СРЕДСТВ</h2>
+        <p>Пользователь вправе отказаться от услуг и потребовать возврата в течение <strong>3 календарных дней</strong> с момента оплаты, если услуги не были использованы.</p>
+        <p>Для возврата: <a href="https://t.me/subbotin_core">@subbotin_core</a></p>
+
+        <h2>5. ОГРАНИЧЕНИЕ ОТВЕТСТВЕННОСТИ</h2>
+        <p>AI-ассистент предоставляет информацию в ознакомительных целях и не заменяет профессиональные консультации.</p>
+        <p>Исполнитель не несёт ответственности за блокировку VPN-серверов на стороне операторов связи.</p>
+
+        <h2>6. ПЕРСОНАЛЬНЫЕ ДАННЫЕ</h2>
+        <p>Обрабатываются: Telegram ID, имя пользователя, история сообщений (для AI), IP-адрес (для VPN).</p>
+        <p>Данные хранятся на серверах в Российской Федерации и не передаются третьим лицам.</p>
+
+        <hr>
+
+        <div class="requisites">
+            <h3>Реквизиты Исполнителя</h3>
+            <p><strong>ИП Субботин Артём Денисович</strong></p>
+            <p>ИНН: 440126757099</p>
+            <p>ОГРНИП: 321440000015542</p>
+            <p>Telegram: <a href="https://t.me/subbotin_core">@subbotin_core</a></p>
+            <p>Email: support@core-focus.ru</p>
+        </div>
+
+        <hr>
+        <p style="text-align: center; color: #888; font-size: 14px;">
+            Оплачивая услуги Сервиса, вы подтверждаете, что ознакомились с настоящей офертой и принимаете её условия.
+        </p>
+    </div>
+</body>
+</html>"""
+    return HTMLResponse(offer_html)
+
+
 def render_vpn_page(users: list, error: str, success: str = None) -> str:
     """Рендер страницы VPN пользователей"""
 

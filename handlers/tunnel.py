@@ -996,7 +996,8 @@ async def callback_pay(callback: types.CallbackQuery):
                     f"Период: **{months} {months_word}**\n"
                     f"Сумма: **{price} ₽**\n\n"
                     f"Нажмите кнопку ниже для оплаты.\n"
-                    f"После оплаты подписка активируется автоматически."
+                    f"После оплаты подписка активируется автоматически.\n\n"
+                    f"[Публичная оферта](https://core-focus.ru/offer)"
                 )
 
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -1007,7 +1008,8 @@ async def callback_pay(callback: types.CallbackQuery):
                 await callback.message.edit_text(
                     text,
                     parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=keyboard
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True
                 )
             else:
                 # Ошибка создания платежа — показываем промокод

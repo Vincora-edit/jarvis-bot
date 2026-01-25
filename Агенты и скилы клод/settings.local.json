@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm start)",
+      "Bash(npm install:*)",
+      "Bash(pkill:*)",
+      "Bash(lsof:*)",
+      "Bash(git commit:*)",
+      "Bash(curl:*)",
+      "Bash(xargs kill:*)",
+      "WebSearch",
+      "Bash(sshpass -p 'rZqGoF-U8P-,Fe' ssh -o StrictHostKeyChecking=no root@72.56.67.25 \"tail -30 ~/.bash_history\")",
+      "Bash(sshpass -p 'rZqGoF-U8P-,Fe' ssh -o StrictHostKeyChecking=no root@72.56.67.25 \"docker logs parserbot_backend --tail 100 2>&1 | grep -A 10 ''Метаданные видео получены\\|Сохранённые метрики''\")",
+      "Bash(cat:*)",
+      "Bash(sshpass -p 'rZqGoF-U8P-,Fe' ssh -o StrictHostKeyChecking=no root@72.56.67.25 \"cd /opt/parserbot_service && ls -la docker-compose.*.yml && cat .active_env\")",
+      "Bash(git push)",
+      "Bash(sshpass:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [],
+    "ask": []
+  },
+  "enabledMcpjsonServers": [
+    "mongodb",
+    "logs"
+  ],
+  "outputStyle": "Explanatory"
+}
