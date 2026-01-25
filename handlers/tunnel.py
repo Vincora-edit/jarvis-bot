@@ -956,28 +956,74 @@ async def callback_buy(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("tunnel:pay:"))
 async def callback_pay(callback: types.CallbackQuery):
-    """Оплата (заглушка до подключения ЮKassa)"""
+    """Создание платежа через ЮKassa"""
+    from services.yookassa_service import YookassaService, get_plan_price, PLAN_NAMES
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
     try:
         parts = callback.data.split(":")
         plan = parts[2]
-        months = parts[3]
+        months = int(parts[3])
 
-        text = (
-            f"💳 *Оплата*\n\n"
-            f"План: *{plan.upper()}*\n"
-            f"Период: *{months} мес.*\n\n"
-            f"⚠️ Оплата временно недоступна.\n"
-            f"Для активации подписки напишите @subbotin\\_core\n\n"
-            f"Или используйте промокод, если он у вас есть."
-        )
+        # Проверяем цену
+        price = get_plan_price(plan, months)
+        if not price:
+            await callback.answer("Неизвестный тариф", show_alert=True)
+            return
 
-        await callback.message.edit_text(
-            text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=promo_keyboard()
-        )
+        plan_name = PLAN_NAMES.get(plan, plan)
+
+        async with async_session() as session:
+            memory = MemoryService(session)
+            user, _ = await memory.get_or_create_user(callback.from_user.id)
+
+            # Создаём платёж
+            service = YookassaService(session)
+            payment_url, payment_id = await service.create_payment(
+                user_id=user.id,
+                telegram_id=callback.from_user.id,
+                plan=plan,
+                months=months,
+            )
+
+            if payment_url:
+                # Показываем кнопку оплаты
+                months_word = "месяц" if months == 1 else "месяца" if months in [2, 3, 4] else "месяцев"
+
+                text = (
+                    f"💳 **Оплата**\n\n"
+                    f"Тариф: **{plan_name}**\n"
+                    f"Период: **{months} {months_word}**\n"
+                    f"Сумма: **{price} ₽**\n\n"
+                    f"Нажмите кнопку ниже для оплаты.\n"
+                    f"После оплаты подписка активируется автоматически."
+                )
+
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="tunnel:plans")]
+                ])
+
+                await callback.message.edit_text(
+                    text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=keyboard
+                )
+            else:
+                # Ошибка создания платежа — показываем промокод
+                text = (
+                    f"⚠️ Не удалось создать платёж.\n\n"
+                    f"Попробуйте позже или используйте промокод."
+                )
+                await callback.message.edit_text(
+                    text,
+                    reply_markup=promo_keyboard()
+                )
+
     except Exception as e:
         logger.error(f"Error in callback_pay: {e}")
+        await callback.answer("Ошибка создания платежа", show_alert=True)
+
     await callback.answer()
 
 

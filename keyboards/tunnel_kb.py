@@ -97,18 +97,18 @@ def plans_keyboard(show_trial: bool = False, current_plan: str = "free", show_ba
 
 def plan_periods_keyboard(plan: str) -> InlineKeyboardMarkup:
     """Выбор периода подписки"""
-    # Цены из services/plans.py (в рублях)
+    # Цены должны совпадать с services/yookassa_service.py PLAN_PRICES
     prices = {
-        "basic": {"1": "199₽", "3": "499₽", "12": "1699₽"},
-        "standard": {"1": "399₽", "3": "999₽", "12": "3399₽"},
-        "pro": {"1": "599₽", "3": "1499₽", "12": "4999₽"},
+        "basic": {"1": "199₽", "3": "499₽", "12": "1 499₽"},
+        "standard": {"1": "399₽", "3": "999₽", "12": "2 999₽"},
+        "pro": {"1": "599₽", "3": "1 499₽", "12": "4 499₽"},
     }
     p = prices.get(plan, prices["basic"])
 
     buttons = [
         [InlineKeyboardButton(text=f"1 месяц — {p['1']}", callback_data=f"tunnel:pay:{plan}:1")],
-        [InlineKeyboardButton(text=f"3 месяца — {p['3']} (экономия ~17%)", callback_data=f"tunnel:pay:{plan}:3")],
-        [InlineKeyboardButton(text=f"12 месяцев — {p['12']} (экономия ~30%)", callback_data=f"tunnel:pay:{plan}:12")],
+        [InlineKeyboardButton(text=f"3 месяца — {p['3']} (-17%)", callback_data=f"tunnel:pay:{plan}:3")],
+        [InlineKeyboardButton(text=f"12 месяцев — {p['12']} (-37%)", callback_data=f"tunnel:pay:{plan}:12")],
         [InlineKeyboardButton(text="◀️ К тарифам", callback_data="tunnel:plans")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

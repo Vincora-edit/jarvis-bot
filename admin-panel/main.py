@@ -1095,6 +1095,103 @@ async def vpn_send_key(request: Request, key_id: int):
         return RedirectResponse(url="/vpn?error=exception", status_code=302)
 
 
+# === YOOKASSA WEBHOOK ===
+
+@app.post("/api/yookassa/webhook")
+async def yookassa_webhook(request: Request):
+    """
+    Webhook для уведомлений от ЮKassa.
+    Не требует авторизации — ЮKassa сама подписывает запросы.
+    """
+    import sys
+    import json
+
+    try:
+        body = await request.json()
+        print(f"[YooKassa Webhook] Received: {json.dumps(body, indent=2)}")
+
+        # Добавляем путь к боту для импорта сервисов
+        bot_path = os.getenv("BOT_PATH", "/opt/jarvis-bot")
+        if bot_path not in sys.path:
+            sys.path.insert(0, bot_path)
+
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+        from sqlalchemy.orm import sessionmaker
+        from services.yookassa_service import YookassaService
+
+        # Создаём асинхронную сессию к БД бота
+        engine = create_async_engine(f"sqlite+aiosqlite:///{JARVIS_DB_PATH}")
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with async_session() as session:
+            service = YookassaService(session)
+            success = await service.process_webhook(body)
+
+            if success:
+                # Уведомляем пользователя через Telegram
+                await _notify_user_about_payment(body, session)
+
+        return {"status": "ok"}
+
+    except Exception as e:
+        print(f"[YooKassa Webhook] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        # Возвращаем 200 чтобы ЮKassa не повторяла запрос
+        return {"status": "error", "message": str(e)}
+
+
+async def _notify_user_about_payment(body: dict, session):
+    """Отправить уведомление пользователю о статусе платежа"""
+    import aiohttp
+
+    try:
+        event_type = body.get("event", "")
+        payment_obj = body.get("object", {})
+        metadata = payment_obj.get("metadata", {})
+        telegram_id = metadata.get("telegram_id")
+
+        if not telegram_id:
+            return
+
+        bot_token = os.getenv("BOT_TOKEN")
+        if not bot_token:
+            return
+
+        # Формируем сообщение в зависимости от события
+        if event_type == "payment.succeeded":
+            plan = metadata.get("plan", "")
+            months = metadata.get("months", 1)
+            plan_names = {"basic": "Базовый", "standard": "Стандарт", "pro": "Про"}
+            plan_name = plan_names.get(plan, plan)
+
+            message = (
+                f"✅ <b>Оплата прошла успешно!</b>\n\n"
+                f"Тариф: {plan_name}\n"
+                f"Период: {months} мес.\n\n"
+                f"Спасибо за поддержку! 🙏"
+            )
+        elif event_type == "payment.canceled":
+            message = "❌ Платёж отменён или не прошёл. Попробуйте ещё раз."
+        elif event_type == "refund.succeeded":
+            message = "💸 Возврат средств выполнен."
+        else:
+            return  # Неизвестное событие
+
+        async with aiohttp.ClientSession() as http_session:
+            await http_session.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={
+                    "chat_id": telegram_id,
+                    "text": message,
+                    "parse_mode": "HTML"
+                }
+            )
+
+    except Exception as e:
+        print(f"[YooKassa Webhook] Notify error: {e}")
+
+
 def render_vpn_page(users: list, error: str, success: str = None) -> str:
     """Рендер страницы VPN пользователей"""
 

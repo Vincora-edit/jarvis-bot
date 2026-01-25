@@ -53,6 +53,11 @@ class Config:
     # Память AI (сколько сообщений хранить в контексте)
     CONVERSATION_HISTORY_LIMIT: int = 20
 
+    # ЮKassa (платежи)
+    YOOKASSA_SHOP_ID: str = os.getenv("YOOKASSA_SHOP_ID", "")
+    YOOKASSA_SECRET_KEY: str = os.getenv("YOOKASSA_SECRET_KEY", "")
+    YOOKASSA_RETURN_URL: str = os.getenv("YOOKASSA_RETURN_URL", "https://t.me/JarvisAssistBot")
+
     @classmethod
     def validate(cls) -> bool:
         """Проверка обязательных переменных"""
