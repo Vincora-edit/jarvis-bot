@@ -126,6 +126,24 @@ class YookassaService:
                 },
                 "capture": True,  # Автоматическое списание
                 "description": description,
+                "receipt": {
+                    "customer": {
+                        "email": "customer@example.com"  # Можно заменить на реальный email если есть
+                    },
+                    "items": [
+                        {
+                            "description": description,
+                            "quantity": "1.00",
+                            "amount": {
+                                "value": f"{amount:.2f}",
+                                "currency": "RUB"
+                            },
+                            "vat_code": 1,  # Без НДС (для ИП на УСН)
+                            "payment_mode": "full_payment",
+                            "payment_subject": "service"
+                        }
+                    ]
+                },
                 "metadata": {
                     "user_id": user_id,
                     "telegram_id": telegram_id,
